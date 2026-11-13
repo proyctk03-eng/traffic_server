@@ -3,10 +3,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
-const crypto = require('node:crypto');
 const axios = require('axios');
 
-const { ROOT_DIR, setupServerEnv } = require('./helpers/test_env');
+const { ROOT_DIR, setupServerEnv, withTempAdminCredentials } = require('./helpers/test_env');
 
 describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
     let env;
@@ -540,9 +539,6 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
         let allowIntentional404 = false;
         const PNG_1X1 = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
 
-        const adminPath = path.join(ROOT_DIR, 'admin.json');
-        const origAdminRaw = fs.readFileSync(adminPath);
-
         try {
             const context = await browser.newContext();
             const page = await context.newPage();
@@ -732,24 +728,13 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
             await page.waitForFunction(() => document.getElementById('auth-pill')?.textContent?.includes('Khách'));
 
             // Log in as single admin via modal WITHOUT reloading the page
-            const tmpSalt = crypto.randomBytes(8).toString('hex');
-            const tmpPass = 'PwDemoSecret_999';
-            const tmpHash = crypto.createHmac('sha256', tmpSalt).update(tmpPass).digest('hex');
-            const parsedOrig = JSON.parse(origAdminRaw.toString('utf-8'));
-            fs.writeFileSync(adminPath, JSON.stringify({
-                username: parsedOrig.username,
-                salt: tmpSalt,
-                passwordHash: tmpHash
-            }, null, 4));
-            try {
+            await withTempAdminCredentials('PwDemoSecret_999', async (adminUser, adminPass) => {
                 await page.click('#open-login-btn');
-                await page.fill('#login-user', parsedOrig.username);
-                await page.fill('#login-pass', tmpPass);
+                await page.fill('#login-user', adminUser);
+                await page.fill('#login-pass', adminPass);
                 await page.click('#submit-login-btn');
                 await page.waitForFunction(() => document.getElementById('auth-pill')?.textContent?.includes('Admin:'));
-            } finally {
-                fs.writeFileSync(adminPath, origAdminRaw);
-            }
+            });
 
             // Inline admin confirm button appears dynamically on active order without page refresh
             await page.waitForSelector('#inline-admin-confirm-btn:not(.hidden)');
@@ -796,7 +781,6 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
             assert.deepEqual(pageErrors, [], `Unexpected uncaught page errors: ${pageErrors.join('; ')}`);
             assert.deepEqual(consoleErrors, [], `Unexpected console errors: ${consoleErrors.join('; ')}`);
         } finally {
-            fs.writeFileSync(adminPath, origAdminRaw);
             await browser.close();
         }
     });

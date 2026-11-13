@@ -22,6 +22,7 @@ const LOCK_FILE = path.join(os.tmpdir(), 'traffic_server_unit_test.lock');
 
 const MANAGED_FILES = [
     SESSIONS_FILE,
+    ADMIN_FILE,
     PAYMENT_CONFIG_FILE,
     PROXY_CONFIG_FILE,
     TELEGRAM_CONFIG_FILE
@@ -337,11 +338,36 @@ async function setupServerEnv(options = {}) {
     };
 }
 
+/**
+ * Temporarily overrides admin.json credentials (creating a safe temporary file
+ * even when admin.json does not exist yet on clean CI checkouts) and restores
+ * or removes it on exit.
+ */
+async function withTempAdminCredentials(tempPassword, fn) {
+    const snapshots = snapshotFiles([ADMIN_FILE]);
+    let username = 'admin';
+    if (fs.existsSync(ADMIN_FILE)) {
+        try {
+            const parsed = JSON.parse(fs.readFileSync(ADMIN_FILE, 'utf-8'));
+            if (parsed && parsed.username) username = parsed.username;
+        } catch {}
+    }
+    const salt = crypto.randomBytes(8).toString('hex');
+    const passwordHash = crypto.createHmac('sha256', salt).update(tempPassword).digest('hex');
+    fs.writeFileSync(ADMIN_FILE, JSON.stringify({ username, salt, passwordHash }, null, 4), 'utf-8');
+    try {
+        return await fn(username, tempPassword);
+    } finally {
+        restoreFiles(snapshots);
+    }
+}
+
 module.exports = {
     ROOT_DIR,
     CAMPAIGNS_DIR,
     SESSIONS_FILE,
     PAYMENT_CONFIG_FILE,
     PROXY_CONFIG_FILE,
-    setupServerEnv
+    setupServerEnv,
+    withTempAdminCredentials
 };

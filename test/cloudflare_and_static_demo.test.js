@@ -4,10 +4,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
-const crypto = require('node:crypto');
 const axios = require('axios');
 
-const { ROOT_DIR, setupServerEnv } = require('./helpers/test_env');
+const { ROOT_DIR, setupServerEnv, withTempAdminCredentials } = require('./helpers/test_env');
 const { buildStaticDemo } = require('../scripts/build-static-demo');
 const {
     verifyCloudflareSetup,
@@ -186,21 +185,12 @@ describe('Cloudflare Integration, CORS/Bearer Auth & Static Demo Dual-Mode', () 
         assert.equal(badPreflight.headers.get('access-control-allow-origin'), null);
 
         // Standard cookie login must NOT include bearer token in JSON body
-        const adminPath = path.join(ROOT_DIR, 'admin.json');
-        const origAdminRaw = fs.readFileSync(adminPath);
-        const tmpSalt = crypto.randomBytes(8).toString('hex');
-        const tmpPass = 'CorsBearerPass_123';
-        const tmpHash = crypto.createHmac('sha256', tmpSalt).update(tmpPass).digest('hex');
-        const origObj = JSON.parse(origAdminRaw.toString('utf-8'));
-
         let bearerToken;
-        try {
-            fs.writeFileSync(adminPath, JSON.stringify({ username: origObj.username, salt: tmpSalt, passwordHash: tmpHash }, null, 4));
-
+        await withTempAdminCredentials('CorsBearerPass_123', async (adminUser, tmpPass) => {
             const cookieLogin = await fetch(`${env.baseUrl}/api/login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username: origObj.username, password: tmpPass })
+                body: JSON.stringify({ username: adminUser, password: tmpPass })
             }).then(r => r.json());
             assert.equal(cookieLogin.success, true);
             assert.equal(cookieLogin.token, undefined);
@@ -212,7 +202,7 @@ describe('Cloudflare Integration, CORS/Bearer Auth & Static Demo Dual-Mode', () 
                     'X-Auth-Mode': 'bearer',
                     Origin: 'https://traffic-server-demo.pages.dev'
                 },
-                body: JSON.stringify({ username: origObj.username, password: tmpPass })
+                body: JSON.stringify({ username: adminUser, password: tmpPass })
             });
             assert.equal(bearerLogin.status, 200);
             assert.equal(bearerLogin.headers.get('access-control-allow-origin'), 'https://traffic-server-demo.pages.dev');
@@ -221,9 +211,7 @@ describe('Cloudflare Integration, CORS/Bearer Auth & Static Demo Dual-Mode', () 
             assert.equal(bearerBody.role, 'admin');
             assert.ok(typeof bearerBody.token === 'string' && bearerBody.token.length > 10);
             bearerToken = bearerBody.token;
-        } finally {
-            fs.writeFileSync(adminPath, origAdminRaw);
-        }
+        });
 
         // Bearer token grants admin access without cookie; Apikey header must NOT grant admin session access
         const adminOrders = await fetch(`${env.baseUrl}/api/admin/orders`, {
@@ -336,8 +324,6 @@ describe('Cloudflare Integration, CORS/Bearer Auth & Static Demo Dual-Mode', () 
         }
 
         const PNG_1X1 = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
-        const adminPath = path.join(ROOT_DIR, 'admin.json');
-        const origAdminRaw = fs.readFileSync(adminPath);
 
         try {
             const context = await browser.newContext();
@@ -404,21 +390,14 @@ describe('Cloudflare Integration, CORS/Bearer Auth & Static Demo Dual-Mode', () 
             env.trackOrder(realOrderId);
             env.trackProxyKey('K_REMOTE_TUNNEL_KEY_01');
 
-            const tmpSalt = crypto.randomBytes(8).toString('hex');
-            const tmpPass = 'RemoteTunnelPass_99';
-            const tmpHash = crypto.createHmac('sha256', tmpSalt).update(tmpPass).digest('hex');
-            const origObj = JSON.parse(origAdminRaw.toString('utf-8'));
-            fs.writeFileSync(adminPath, JSON.stringify({ username: origObj.username, salt: tmpSalt, passwordHash: tmpHash }, null, 4));
-            try {
+            await withTempAdminCredentials('RemoteTunnelPass_99', async (adminUser, tmpPass) => {
                 await page.click('#open-login-btn');
                 assert.equal(await page.isVisible('#demo-login-hint'), false);
-                await page.fill('#login-user', origObj.username);
+                await page.fill('#login-user', adminUser);
                 await page.fill('#login-pass', tmpPass);
                 await page.click('#submit-login-btn');
                 await page.waitForFunction(() => document.getElementById('auth-pill')?.textContent?.includes('Admin:'));
-            } finally {
-                fs.writeFileSync(adminPath, origAdminRaw);
-            }
+            });
 
             await page.waitForSelector('#inline-admin-confirm-btn:not(.hidden)');
             await page.click('#inline-admin-confirm-btn');
@@ -440,7 +419,6 @@ describe('Cloudflare Integration, CORS/Bearer Auth & Static Demo Dual-Mode', () 
             assert.deepEqual(pageErrors, [], `Unexpected page errors: ${pageErrors.join('; ')}`);
             assert.deepEqual(consoleErrors, [], `Unexpected console errors: ${consoleErrors.join('; ')}`);
         } finally {
-            fs.writeFileSync(adminPath, origAdminRaw);
             await browser.close();
         }
     });

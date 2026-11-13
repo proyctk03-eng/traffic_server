@@ -24,7 +24,7 @@ jobs:
         run: npm ci
 
       - name: Install Playwright Chromium for UI E2E tests
-        run: npx playwright install chromium
+        run: npx playwright install --with-deps chromium
 
       - name: Run time distribution tests
         run: node test_distribution.js
