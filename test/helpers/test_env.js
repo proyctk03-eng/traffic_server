@@ -37,7 +37,7 @@ function isPidAlive(pid) {
     }
 }
 
-async function acquireTestLock(timeoutMs = 60000) {
+async function acquireTestLock(timeoutMs = 180000) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
         try {

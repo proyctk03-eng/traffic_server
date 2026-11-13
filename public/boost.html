@@ -320,13 +320,29 @@
             <span id="auth-pill" class="pill info">Khách (Chưa đăng nhập)</span>
             <button type="button" class="btn btn-sm btn-primary" id="open-login-btn">Đăng nhập 1 Tài khoản</button>
             <button type="button" class="btn btn-sm hidden" id="logout-btn">Đăng xuất</button>
-            <a class="btn btn-sm" href="/track.html">Tra cứu độc lập</a>
-            <a class="btn btn-sm" href="/order.html">Trang đặt lẻ</a>
-            <a class="btn btn-sm" href="/">Dashboard gốc</a>
+            <a class="btn btn-sm server-only-nav" href="/track.html">Tra cứu độc lập</a>
+            <a class="btn btn-sm server-only-nav" href="/order.html">Trang đặt lẻ</a>
+            <a class="btn btn-sm server-only-nav" href="/">Dashboard gốc</a>
         </div>
     </header>
 
     <main class="container">
+        <section class="card" id="runtime-conn-bar" style="padding:10px 14px; margin-bottom:12px;">
+            <div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px;">
+                <div style="display:flex; flex-wrap:wrap; align-items:center; gap:8px;">
+                    <span id="runtime-mode-pill" class="pill ok">Chế độ: Live Backend</span>
+                    <span id="runtime-mode-desc" class="hint" style="margin:0;">Kết nối trực tiếp server Node.js &amp; KiotProxy thật.</span>
+                </div>
+                <div style="display:flex; flex-wrap:wrap; align-items:center; gap:6px; flex:1; min-width:260px; max-width:620px; justify-content:flex-end;">
+                    <input type="url" id="backend-url-input" placeholder="https://xxxx.trycloudflare.com (URL Cloudflare Tunnel)" style="flex:1; min-width:190px; padding:5px 9px; font-size:12.5px;">
+                    <button type="button" class="btn btn-sm btn-primary" id="connect-backend-btn">Kết nối Tunnel</button>
+                    <button type="button" class="btn btn-sm" id="use-demo-mode-btn">Chế độ Demo tĩnh</button>
+                    <button type="button" class="btn btn-sm hidden" id="use-same-origin-btn">Về Same-Origin</button>
+                </div>
+            </div>
+            <div id="runtime-conn-msg" style="margin-top:6px;"></div>
+        </section>
+
         <section class="spec-strip">
             <div><strong>Thực thi đúng nền tảng:</strong> <span id="spec-mode">Request HTTP nhẹ (Axios + KiotProxy), giữ IP 2–5s, 0 trình duyệt</span></div>
             <div><strong>Định giá backend:</strong> <span id="spec-pricing">40 VNĐ/click + Math.ceil(giờ) × 2.000 VNĐ</span></div>
@@ -743,6 +759,7 @@
             <p class="hint" style="margin-bottom:12px;">
                 Dành riêng cho quản trị viên duy nhất trong <code>admin.json</code>. Khách hàng đặt &amp; theo dõi đơn trực tiếp không cần tài khoản.
             </p>
+            <div id="demo-login-hint" class="alert info hidden" style="margin-bottom:10px;"></div>
             <div id="login-modal-msg"></div>
             <form id="boost-login-form">
                 <div class="field">

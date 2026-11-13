@@ -2,9 +2,16 @@
     'use strict';
 
     const RECENT_ORDERS_KEY = 'boost_recent_orders_v1';
+    const REMOTE_BACKEND_KEY = 'boost_remote_backend_v1';
+    const REMOTE_TOKEN_KEY_PREFIX = 'boost_remote_token_v1:';
+    const DEMO_DB_KEY = 'boost_demo_db_v1';
     const MAX_RECENT_ORDERS = 12;
 
     const state = {
+        mode: 'same-origin', // 'same-origin' | 'remote' | 'demo'
+        backendUrl: '',
+        bearerToken: '',
+        remoteSocketLoadedFor: '',
         config: {
             authenticated: false,
             role: null,
@@ -25,6 +32,7 @@
         adminLoadingPromise: null,
         expandPreviewSlices: false,
         campaignLogs: new Map(),
+        demoTimers: new Map(),
         activeTab: 'customer'
     };
 
@@ -59,8 +67,505 @@
         el.innerHTML = `<div class="alert ${esc(kind)}">${esc(msg)}</div>`;
     }
 
-    async function apiJson(url, opts = {}) {
+    function normalizeBackendUrl(raw) {
+        const s = String(raw || '').trim();
+        if (!s) return '';
+        try {
+            const u = new URL(s);
+            if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';
+            return u.origin;
+        } catch (e) {
+            return '';
+        }
+    }
+
+    function isStaticHostingEnv() {
+        if (window.__STATIC_DEMO_MODE__ === true) return true;
+        if (window.location.protocol === 'file:') return true;
+        return /\.(pages\.dev|github\.io)$/i.test(window.location.hostname || '');
+    }
+
+    function loadSavedRemoteToken(backendOrigin) {
+        if (!backendOrigin) return '';
+        try { return sessionStorage.getItem(REMOTE_TOKEN_KEY_PREFIX + backendOrigin) || ''; } catch (e) { return ''; }
+    }
+
+    function saveRemoteToken(backendOrigin, token) {
+        if (!backendOrigin) return;
+        try {
+            if (token) sessionStorage.setItem(REMOTE_TOKEN_KEY_PREFIX + backendOrigin, token);
+            else sessionStorage.removeItem(REMOTE_TOKEN_KEY_PREFIX + backendOrigin);
+        } catch (e) {}
+    }
+
+    function renderRuntimeModeUI() {
+        const pill = $('runtime-mode-pill');
+        const desc = $('runtime-mode-desc');
+        const input = $('backend-url-input');
+        const sameBtn = $('use-same-origin-btn');
+        const demoBtn = $('use-demo-mode-btn');
+        if (input && state.backendUrl && document.activeElement !== input) {
+            input.value = state.backendUrl;
+        } else if (input && !state.backendUrl && state.mode !== 'remote' && document.activeElement !== input) {
+            input.value = '';
+        }
+
+        const canUseSameOrigin = !isStaticHostingEnv();
+        if (sameBtn) sameBtn.classList.toggle('hidden', !canUseSameOrigin || state.mode === 'same-origin');
+        if (demoBtn) demoBtn.classList.toggle('hidden', state.mode === 'demo');
+
+        document.querySelectorAll('.server-only-nav').forEach(link => {
+            const origHref = link.dataset.origHref || link.getAttribute('href');
+            link.dataset.origHref = origHref;
+            if (state.mode === 'demo') {
+                link.classList.add('hidden');
+            } else if (state.mode === 'remote' && state.backendUrl) {
+                link.classList.remove('hidden');
+                link.setAttribute('href', state.backendUrl + origHref);
+                link.setAttribute('target', '_blank');
+                link.setAttribute('rel', 'noopener');
+            } else {
+                link.classList.remove('hidden');
+                link.setAttribute('href', origHref);
+                link.removeAttribute('target');
+            }
+        });
+
+        if (state.mode === 'remote') {
+            pill.className = 'pill info';
+            pill.textContent = 'Chế độ: Remote Tunnel';
+            desc.textContent = `Đang nối Backend thật tại ${state.backendUrl} (CORS + Bearer Token).`;
+        } else if (state.mode === 'demo') {
+            pill.className = 'pill warn';
+            pill.textContent = 'Chế độ: Static Demo (Giả lập)';
+            desc.textContent = 'Đang chạy độc lập trên trình duyệt (localStorage, không gửi traffic thật). Nhập URL Cloudflare Tunnel để chạy thật.';
+        } else {
+            pill.className = 'pill ok';
+            pill.textContent = 'Chế độ: Live Backend';
+            desc.textContent = 'Kết nối trực tiếp server Node.js & KiotProxy thật (Same-Origin).';
+        }
+    }
+
+    // ─── Static Demo Fallback Engine (Cloudflare Pages / GitHub Pages) ─────────
+    function getDefaultDemoDb() {
+        return {
+            auth: { authenticated: false, role: null, username: null },
+            bankInfo: {
+                bankId: 'MB',
+                bankName: 'MBBank',
+                accountNumber: '0987654321',
+                accountName: 'TRAFFIC SERVICE',
+                template: 'compact2',
+                webhookSecret: ''
+            },
+            proxyConfig: { region: 'random', keys: ['K_DEMO_KEY_SAMPLE_01'], cooldownSec: 14 },
+            orders: [],
+            campaigns: [],
+            nextOrderSeq: 1001,
+            nextCampSeq: 1
+        };
+    }
+
+    function loadDemoDb() {
+        const def = getDefaultDemoDb();
+        try {
+            const raw = localStorage.getItem(DEMO_DB_KEY);
+            if (!raw) return def;
+            const parsed = JSON.parse(raw);
+            return Object.assign(def, parsed || {});
+        } catch (e) {
+            return def;
+        }
+    }
+
+    function saveDemoDb(db) {
+        try { localStorage.setItem(DEMO_DB_KEY, JSON.stringify(db)); } catch (e) {}
+    }
+
+    function demoJsonRes(status, data) {
+        return { res: { ok: status >= 200 && status < 300, status }, data };
+    }
+
+    function demoMaskProxyKey(key) {
+        const s = String(key || '').trim();
+        return s.length > 4 ? '...' + s.slice(-4) : '****';
+    }
+
+    function demoCalcCost(targetClicks, durationHours) {
+        const clicks = Number(targetClicks);
+        const hours = Number(durationHours);
+        if (!Number.isInteger(clicks) || clicks < 1) {
+            return { error: 'targetClicks must be a positive integer greater than or equal to 1' };
+        }
+        if (!Number.isFinite(hours) || hours <= 0) {
+            return { error: 'durationHours must be a positive number greater than 0' };
+        }
+        const roundedHours = Math.ceil(hours);
+        const clickFee = clicks * 40;
+        const durationFee = roundedHours * 2000;
+        return {
+            targetClicks: clicks,
+            durationHours: hours,
+            roundedHours,
+            clickRate: 40,
+            hourlyRate: 2000,
+            clickFee,
+            durationFee,
+            totalAmount: clickFee + durationFee
+        };
+    }
+
+    function stopDemoCampaignTimer(orderId) {
+        const t = state.demoTimers.get(orderId);
+        if (t) {
+            clearInterval(t);
+            state.demoTimers.delete(orderId);
+        }
+    }
+
+    function clearAllDemoTimers() {
+        for (const t of state.demoTimers.values()) clearInterval(t);
+        state.demoTimers.clear();
+    }
+
+    function emitDemoLog(campId, text, type = 'info') {
+        const entry = { campaignId: campId, text, type };
+        const rec = recordCampaignLog(entry);
+        const line = rec ? rec.line : `[C${campId}] ${text}`;
+        const time = rec ? rec.time : null;
+        appendLogLine('adm-global-log', line, type, time);
+        if (state.activeOrder) {
+            const activeCampId = (state.activeOrder.progress && state.activeOrder.progress.campaignId) || state.activeOrder.campaignId;
+            if (activeCampId && String(campId) === String(activeCampId)) {
+                const box = $('ao-worker-log');
+                if (box && box.dataset.campId !== String(activeCampId)) hydrateOrderWorkerLogs(activeCampId);
+                else appendLogLine('ao-worker-log', line, type, time);
+            }
+        }
+    }
+
+    function startDemoCampaignSimulation(orderId) {
+        if (state.mode !== 'demo') return;
+        stopDemoCampaignTimer(orderId);
+        const db0 = loadDemoDb();
+        const ord0 = db0.orders.find(o => o.orderId === orderId);
+        if (!ord0 || ord0.paymentStatus !== 'paid' || ord0.status !== 'running') return;
+        const cid = ord0.campaignId;
+        emitDemoLog(cid, `[DEMO SIM] Khoi chay chien dich mo phong -> ${ord0.targetUrl} (${ord0.targetClicks} luot, ${ord0.scheduleMode})`, 'system');
+
+        const batchStep = Math.max(1, Math.ceil((ord0.targetClicks || 1) / 14));
+        const timer = setInterval(() => {
+            if (state.mode !== 'demo') {
+                stopDemoCampaignTimer(orderId);
+                return;
+            }
+            const db = loadDemoDb();
+            const ord = db.orders.find(o => o.orderId === orderId);
+            const camp = db.campaigns.find(c => String(c.id) === String(cid));
+            if (!ord || !camp || ord.status !== 'running') {
+                stopDemoCampaignTimer(orderId);
+                return;
+            }
+            const remaining = Math.max(0, ord.targetClicks - (ord.successVisits || 0));
+            const inc = Math.min(remaining, batchStep);
+            if (inc > 0) {
+                ord.successVisits = (ord.successVisits || 0) + inc;
+                ord.totalVisits = (ord.totalVisits || 0) + inc;
+                ord.uniqueIps = (ord.uniqueIps || 0) + inc;
+                camp.successVisits = ord.successVisits;
+                camp.totalVisits = ord.totalVisits;
+                camp.uniqueIps = ord.uniqueIps;
+                const fakeIp = `203.0.113.${(ord.successVisits % 250) + 1}`;
+                emitDemoLog(cid, `[DEMO SIM] Quay IP gia lap ${fakeIp} -> HTTP 200 OK (+${inc} luot: ${ord.successVisits}/${ord.targetClicks})`, 'success');
+            }
+            if (ord.successVisits >= ord.targetClicks) {
+                ord.status = 'completed';
+                ord.completedAt = Date.now();
+                camp.status = 'completed';
+                camp.actualEndTime = ord.completedAt;
+                saveDemoDb(db);
+                stopDemoCampaignTimer(orderId);
+                emitDemoLog(cid, `[DEMO SIM] Hoan thanh ${ord.successVisits}/${ord.targetClicks} luot mo phong!`, 'success');
+            } else {
+                saveDemoDb(db);
+            }
+            if (state.activeOrderId === orderId) fetchActiveOrder(orderId);
+            if (state.config.role === 'admin') {
+                loadAdminOrders();
+                loadAdminCampaigns();
+            }
+        }, 380);
+        state.demoTimers.set(orderId, timer);
+    }
+
+    function buildDemoOrderPublic(ord, camp) {
+        const { proxyKey, ...rest } = ord;
+        const c = camp || {};
+        return {
+            ...rest,
+            proxyKeyMasked: demoMaskProxyKey(proxyKey),
+            progress: {
+                orderId: ord.orderId,
+                campaignId: ord.campaignId,
+                status: c.status || ord.status,
+                successVisits: c.successVisits ?? ord.successVisits ?? 0,
+                failedVisits: c.failedVisits ?? ord.failedVisits ?? 0,
+                totalVisits: c.totalVisits ?? ord.totalVisits ?? 0,
+                uniqueIps: c.uniqueIps ?? ord.uniqueIps ?? 0,
+                dupIps: c.dupIps ?? ord.dupIps ?? 0,
+                targetLimit: ord.targetClicks,
+                browserMode: 'request (demo-sim)',
+                scheduleMode: ord.scheduleMode || 'smart',
+                startTime: c.startTime || null,
+                endTime: c.endTime || null,
+                actualStartTime: c.actualStartTime || ord.paidAt || null,
+                actualEndTime: c.actualEndTime || ord.completedAt || null
+            }
+        };
+    }
+
+    function demoApiDispatch(path, opts = {}) {
+        const method = String(opts.method || 'GET').toUpperCase();
+        let body = {};
+        if (opts.body && typeof opts.body === 'string') {
+            try { body = JSON.parse(opts.body); } catch (e) {}
+        }
+        const db = loadDemoDb();
+        const isAdmin = db.auth && db.auth.authenticated && db.auth.role === 'admin';
+        const { webhookSecret, ...publicBank } = db.bankInfo;
+
+        if (path === '/api/public-config' && method === 'GET') {
+            return demoJsonRes(200, {
+                success: true,
+                authenticated: Boolean(db.auth && db.auth.authenticated),
+                role: (db.auth && db.auth.role) || null,
+                username: (db.auth && db.auth.username) || null,
+                singleAccountMode: true,
+                browserMode: 'request',
+                pricing: { clickRate: 40, hourlyRate: 2000, currency: 'VND' },
+                bankInfo: publicBank
+            });
+        }
+        if (path === '/api/login' && method === 'POST') {
+            const u = String(body.username || '').trim();
+            const p = String(body.password || '');
+            if (u === 'admin' && p === 'admin123456') {
+                db.auth = { authenticated: true, role: 'admin', username: 'admin' };
+                saveDemoDb(db);
+                return demoJsonRes(200, { success: true, role: 'admin', username: 'admin' });
+            }
+            if (u === '1' && p === '1') {
+                db.auth = { authenticated: true, role: 'guest', username: '1' };
+                saveDemoDb(db);
+                return demoJsonRes(200, { success: true, role: 'guest', username: '1' });
+            }
+            return demoJsonRes(401, { success: false, message: 'Sai tài khoản Static Demo (dùng admin / admin123456 hoặc guest 1/1).' });
+        }
+        if (path === '/api/logout' && method === 'POST') {
+            db.auth = { authenticated: false, role: null, username: null };
+            saveDemoDb(db);
+            return demoJsonRes(200, { success: true });
+        }
+        if (path === '/api/orders/calculate-cost' && method === 'POST') {
+            const calc = demoCalcCost(body.targetClicks, body.durationHours);
+            if (calc.error) return demoJsonRes(400, { success: false, message: calc.error });
+            return demoJsonRes(200, { success: true, ...calc });
+        }
+        if (path === '/api/orders' && method === 'POST') {
+            let validUrl = false;
+            try {
+                const u = new URL(String(body.targetUrl || '').trim());
+                validUrl = u.protocol === 'http:' || u.protocol === 'https:';
+            } catch (e) {}
+            if (!validUrl) return demoJsonRes(400, { success: false, message: 'URL đích phải bắt đầu bằng http:// hoặc https://.' });
+            const pKey = String(body.proxyKey || '').trim();
+            if (!pKey) return demoJsonRes(400, { success: false, message: 'Vui lòng nhập KiotProxy Key.' });
+            const calc = demoCalcCost(body.targetClicks, body.durationHours);
+            if (calc.error) return demoJsonRes(400, { success: false, message: calc.error });
+
+            const orderId = 'ORD-' + Date.now() + '-' + Math.random().toString(16).slice(2, 10);
+            const orderCode = 'TF' + (db.nextOrderSeq++);
+            const vietQrUrl = `https://img.vietqr.io/image/${encodeURIComponent(publicBank.bankId)}-${encodeURIComponent(publicBank.accountNumber)}-${encodeURIComponent(publicBank.template || 'compact2')}.png?amount=${calc.totalAmount}&addInfo=${encodeURIComponent(orderCode)}&accountName=${encodeURIComponent((publicBank.accountName || '').toUpperCase())}`;
+            const order = {
+                orderId,
+                orderCode,
+                name: String(body.name || '').trim() || `Demo_${orderCode}`,
+                targetUrl: String(body.targetUrl).trim(),
+                proxyKey: pKey,
+                targetClicks: calc.targetClicks,
+                durationHours: calc.durationHours,
+                roundedHours: calc.roundedHours,
+                clickFee: calc.clickFee,
+                durationFee: calc.durationFee,
+                totalAmount: calc.totalAmount,
+                currency: 'VND',
+                browserMode: 'request',
+                scheduleMode: ['even', 'custom'].includes(body.scheduleMode) ? body.scheduleMode : 'smart',
+                customBlocks: body.customBlocks || null,
+                dedupIp: body.dedupIp !== false,
+                randomLinks: body.randomLinks !== false,
+                vietQrUrl,
+                bankInfo: publicBank,
+                status: 'pending_payment',
+                paymentStatus: 'pending_payment',
+                campaignId: null,
+                createdAt: Date.now(),
+                paidAt: null,
+                successVisits: 0,
+                failedVisits: 0,
+                totalVisits: 0,
+                uniqueIps: 0,
+                dupIps: 0
+            };
+            db.orders.unshift(order);
+            saveDemoDb(db);
+            return demoJsonRes(201, { success: true, ...order });
+        }
+        const getOrderMatch = path.match(/^\/api\/orders\/([^/]+)$/);
+        if (getOrderMatch && method === 'GET') {
+            const oid = decodeURIComponent(getOrderMatch[1]);
+            const ord = db.orders.find(o => o.orderId === oid);
+            if (!ord) return demoJsonRes(404, { success: false, message: 'Order not found' });
+            const camp = ord.campaignId ? db.campaigns.find(c => String(c.id) === String(ord.campaignId)) : null;
+            return demoJsonRes(200, { success: true, order: buildDemoOrderPublic(ord, camp) });
+        }
+
+        // Everything below requires admin in Static Demo too (mirrors backend RBAC)
+        if (!isAdmin) {
+            return demoJsonRes(403, { success: false, message: 'Vui lòng đăng nhập tài khoản Admin demo (admin / admin123456).' });
+        }
+
+        const confirmMatch = path.match(/^\/api\/orders\/([^/]+)\/confirm$/);
+        if (confirmMatch && method === 'POST') {
+            const oid = decodeURIComponent(confirmMatch[1]);
+            const ord = db.orders.find(o => o.orderId === oid);
+            if (!ord) return demoJsonRes(404, { success: false, message: 'Order not found' });
+            if (!ord.campaignId) {
+                const cid = String(db.nextCampSeq++);
+                const now = Date.now();
+                ord.paymentStatus = 'paid';
+                ord.status = 'running';
+                ord.paidAt = now;
+                ord.campaignId = cid;
+                db.campaigns.unshift({
+                    id: cid,
+                    name: ord.name,
+                    targetUrl: ord.targetUrl,
+                    status: 'running',
+                    successVisits: 0,
+                    failedVisits: 0,
+                    totalVisits: 0,
+                    uniqueIps: 0,
+                    dupIps: 0,
+                    targetLimit: ord.targetClicks,
+                    startTime: now,
+                    actualStartTime: now,
+                    endTime: now + Math.round(ord.durationHours * 3600000)
+                });
+                saveDemoDb(db);
+                startDemoCampaignSimulation(ord.orderId);
+            }
+            return demoJsonRes(200, { success: true, orderId: ord.orderId, campaignId: ord.campaignId });
+        }
+        if (path === '/api/admin/orders' && method === 'GET') {
+            const orders = db.orders.map(o => {
+                const camp = o.campaignId ? db.campaigns.find(c => String(c.id) === String(o.campaignId)) : null;
+                const pub = buildDemoOrderPublic(o, camp);
+                pub.effectiveStatus = pub.progress.status;
+                return pub;
+            });
+            const summary = {
+                totalOrders: orders.length,
+                totalRevenue: orders.filter(o => o.paymentStatus === 'paid').reduce((s, o) => s + Number(o.totalAmount || 0), 0),
+                paidCount: orders.filter(o => o.paymentStatus === 'paid').length,
+                pendingCount: orders.filter(o => o.paymentStatus !== 'paid').length,
+                runningCount: orders.filter(o => ['running', 'waiting'].includes(o.effectiveStatus)).length,
+                completedCount: orders.filter(o => ['completed', 'stopped', 'expired'].includes(o.effectiveStatus)).length
+            };
+            return demoJsonRes(200, { success: true, summary, orders });
+        }
+        const delMatch = path.match(/^\/api\/admin\/orders\/([^/]+)$/);
+        if (delMatch && method === 'DELETE') {
+            const oid = decodeURIComponent(delMatch[1]);
+            const idx = db.orders.findIndex(o => o.orderId === oid);
+            if (idx === -1) return demoJsonRes(404, { success: false, message: 'Order not found' });
+            const removed = db.orders.splice(idx, 1)[0];
+            stopDemoCampaignTimer(oid);
+            if (removed.campaignId) {
+                db.campaigns = db.campaigns.filter(c => String(c.id) !== String(removed.campaignId));
+            }
+            saveDemoDb(db);
+            return demoJsonRes(200, { success: true });
+        }
+        if (path === '/api/campaigns' && method === 'GET') {
+            return demoJsonRes(200, { success: true, data: db.campaigns });
+        }
+        const stopMatch = path.match(/^\/api\/campaigns\/([^/]+)\/stop$/);
+        if (stopMatch && method === 'POST') {
+            const cid = decodeURIComponent(stopMatch[1]);
+            const camp = db.campaigns.find(c => String(c.id) === String(cid));
+            if (!camp) return demoJsonRes(404, { success: false, message: 'Campaign not found' });
+            camp.status = 'stopped';
+            camp.actualEndTime = Date.now();
+            const ord = db.orders.find(o => String(o.campaignId) === String(cid));
+            if (ord) {
+                ord.status = 'stopped';
+                stopDemoCampaignTimer(ord.orderId);
+            }
+            saveDemoDb(db);
+            emitDemoLog(cid, '[DEMO SIM] Admin da dung chien dich.', 'warn');
+            return demoJsonRes(200, { success: true });
+        }
+        const resetMatch = path.match(/^\/api\/campaigns\/([^/]+)\/reset-stats$/);
+        if (resetMatch && method === 'POST') {
+            const cid = decodeURIComponent(resetMatch[1]);
+            const camp = db.campaigns.find(c => String(c.id) === String(cid));
+            if (!camp) return demoJsonRes(404, { success: false, message: 'Campaign not found' });
+            camp.successVisits = 0; camp.failedVisits = 0; camp.totalVisits = 0; camp.uniqueIps = 0; camp.dupIps = 0;
+            const ord = db.orders.find(o => String(o.campaignId) === String(cid));
+            if (ord) { ord.successVisits = 0; ord.failedVisits = 0; ord.totalVisits = 0; ord.uniqueIps = 0; ord.dupIps = 0; }
+            saveDemoDb(db);
+            return demoJsonRes(200, { success: true });
+        }
+        if (path === '/api/admin/payment-config' && method === 'GET') {
+            return demoJsonRes(200, { success: true, config: db.bankInfo });
+        }
+        if (path === '/api/admin/payment-config' && method === 'POST') {
+            db.bankInfo = Object.assign({}, db.bankInfo, {
+                bankId: String(body.bankId || 'MB').toUpperCase(),
+                bankName: String(body.bankName || body.bankId || 'MBBank'),
+                accountNumber: String(body.accountNumber || ''),
+                accountName: String(body.accountName || '').toUpperCase(),
+                template: body.template || 'compact2',
+                webhookSecret: body.webhookSecret || ''
+            });
+            saveDemoDb(db);
+            return demoJsonRes(200, { success: true, config: db.bankInfo });
+        }
+        if (path === '/api/proxy-config' && method === 'GET') {
+            return demoJsonRes(200, { success: true, data: db.proxyConfig });
+        }
+        if (path === '/api/proxy-config' && method === 'POST') {
+            db.proxyConfig = {
+                region: body.region || 'random',
+                keys: Array.isArray(body.keys) ? body.keys : [],
+                cooldownSec: Number.isFinite(body.cooldownSec) ? body.cooldownSec : 14
+            };
+            saveDemoDb(db);
+            return demoJsonRes(200, { success: true, message: `[Static Demo] Đã lưu ${db.proxyConfig.keys.length} proxy key mô phỏng.` });
+        }
+        return demoJsonRes(404, { success: false, message: 'Endpoint not mocked in Static Demo' });
+    }
+
+    async function apiJson(path, opts = {}) {
+        if (state.mode === 'demo') {
+            return demoApiDispatch(path, opts);
+        }
+        const url = state.mode === 'remote' && state.backendUrl ? (state.backendUrl + path) : path;
         const headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
+        if (state.mode === 'remote' && state.bearerToken && !headers.Authorization) {
+            headers.Authorization = 'Bearer ' + state.bearerToken;
+        }
         const res = await fetch(url, { ...opts, headers });
         let data = null;
         try { data = await res.json(); } catch (e) { data = { success: false, message: 'Invalid JSON response' }; }
@@ -69,6 +574,20 @@
 
     // ─── Public Config & Single-Account Auth State ────────────────────────────
     async function refreshPublicConfig() {
+        if (state.mode === 'remote') {
+            try {
+                const { res, data } = await apiJson('/api/public-config');
+                if (res.ok && data && data.success) {
+                    state.config = data;
+                    renderAuthState();
+                    return true;
+                }
+            } catch (e) {
+                // Handled below
+            }
+            renderAuthState();
+            return false;
+        }
         try {
             const { res, data } = await apiJson('/api/public-config');
             if (res.ok && data && data.success) {
@@ -78,6 +597,7 @@
             // Keep existing fallback pricing/config
         }
         renderAuthState();
+        return true;
     }
 
     function renderAuthState() {
@@ -129,8 +649,27 @@
 
     function openLoginModal() {
         showAlert('login-modal-msg', '');
+        const demoHint = $('demo-login-hint');
+        if (demoHint) {
+            if (state.mode === 'demo') {
+                demoHint.textContent = 'Static Demo Mode: Dùng tài khoản mẫu admin / admin123456 (hoặc guest 1 / 1 chỉ xem) để thử luồng duyệt đơn.';
+                demoHint.classList.remove('hidden');
+            } else {
+                demoHint.textContent = '';
+                demoHint.classList.add('hidden');
+            }
+        }
         $('login-modal').classList.add('open');
-        setTimeout(() => $('login-user').focus(), 20);
+        const userInput = $('login-user');
+        if (userInput) {
+            userInput.focus();
+            setTimeout(() => {
+                const modal = $('login-modal');
+                if (modal && modal.classList.contains('open') && !modal.contains(document.activeElement)) {
+                    userInput.focus();
+                }
+            }, 20);
+        }
     }
 
     function closeLoginModal() {
@@ -149,17 +688,23 @@
         const btn = $('submit-login-btn');
         btn.disabled = true;
         try {
+            const loginHeaders = state.mode === 'remote' ? { 'X-Auth-Mode': 'bearer' } : {};
             const { res, data } = await apiJson('/api/login', {
                 method: 'POST',
+                headers: loginHeaders,
                 body: JSON.stringify({ username, password, rememberMe })
             });
             if (!res.ok || !data.success) {
                 showAlert('login-modal-msg', data.message || 'Đăng nhập thất bại.', 'err');
                 return;
             }
+            if (state.mode === 'remote' && data.token) {
+                state.bearerToken = data.token;
+                saveRemoteToken(state.backendUrl, data.token);
+            }
             $('login-pass').value = '';
             closeLoginModal();
-            reconnectSocket();
+            await reconnectSocket();
             await refreshPublicConfig();
         } catch (err) {
             showAlert('login-modal-msg', 'Lỗi kết nối máy chủ khi đăng nhập.', 'err');
@@ -172,6 +717,10 @@
         try {
             await apiJson('/api/logout', { method: 'POST', body: '{}' });
         } catch (e) {}
+        if (state.mode === 'remote') {
+            state.bearerToken = '';
+            saveRemoteToken(state.backendUrl, '');
+        }
         state.adminOrders = [];
         state.adminCampaigns = [];
         state.adminLoadingPromise = null;
@@ -183,15 +732,17 @@
         const cbody = $('adm-campaigns-body');
         if (cbody) cbody.innerHTML = '<tr><td colspan="5" style="color:var(--muted)">Chưa có chiến dịch nào.</td></tr>';
         const obody = $('adm-orders-body');
-        if (obody) obody.innerHTML = '<tr><td colspan="8" style="color:var(--muted)">Chưa có đơn hàng nào.</td></tr>';
+        if (obody) obody.innerHTML = '<tr><td colspan="6" style="color:var(--muted)">Chưa có đơn hàng nào.</td></tr>';
         if ($('adm-sum-total')) $('adm-sum-total').textContent = '0';
         if ($('adm-sum-rev')) $('adm-sum-rev').textContent = '0 VNĐ';
         if ($('adm-sum-paid')) $('adm-sum-paid').textContent = '0';
         if ($('adm-sum-pending')) $('adm-sum-pending').textContent = '0';
+        if ($('adm-sum-running')) $('adm-sum-running').textContent = '0';
+        if ($('adm-sum-done')) $('adm-sum-done').textContent = '0';
         ['adm-action-msg', 'adm-paycfg-msg', 'adm-proxycfg-msg', 'adm-camp-msg'].forEach(id => showAlert(id, ''));
         if ($('cfg-secret')) $('cfg-secret').value = '';
         if ($('pcfg-keys')) $('pcfg-keys').value = '';
-        reconnectSocket();
+        await reconnectSocket();
         await refreshPublicConfig();
     }
 
@@ -774,8 +1325,12 @@
         const o = state.activeOrder;
         if (!o) return;
         const p = o.progress || {};
+        const runtimeLabel = state.mode === 'demo'
+            ? 'STATIC DEMO (Mo phong trinh duyet, khong gui traffic that)'
+            : (state.mode === 'remote' ? `Remote Backend (${state.backendUrl})` : 'Live Same-Origin');
         const lines = [
             '=== BAO CAO DON HANG TRAFFIC BOOST ===',
+            `Che do he thong: ${runtimeLabel}`,
             `Ma don (Order ID): ${o.orderId}`,
             `Ma chuyen khoan (Order Code): ${o.orderCode}`,
             `Ten chien dich: ${o.name || ''}`,
@@ -809,7 +1364,11 @@
     async function loadAdminDashboard() {
         if (!(state.config.authenticated && state.config.role === 'admin')) return;
         const whEl = $('cfg-webhook-url');
-        if (whEl) whEl.textContent = `${window.location.origin}/api/payment/webhook`;
+        if (whEl) {
+            whEl.textContent = state.mode === 'demo'
+                ? '[Static Demo] Can Backend Tunnel de nhan webhook'
+                : `${state.backendUrl || window.location.origin}/api/payment/webhook`;
+        }
         if (state.adminLoadingPromise) return state.adminLoadingPromise;
         state.adminLoadingPromise = Promise.all([
             loadAdminOrders(),
@@ -1063,13 +1622,58 @@
     }
 
     // ─── Socket.IO Integration ────────────────────────────────────────────────
-    function initSocket() {
+    function ensureRemoteSocketScript(backendUrl) {
+        return new Promise((resolve) => {
+            if (!backendUrl) return resolve(false);
+            if (typeof window.io === 'function' && state.remoteSocketLoadedFor === backendUrl) {
+                return resolve(true);
+            }
+            const existing = document.getElementById('remote-socketio-script');
+            if (existing) existing.remove();
+            const script = document.createElement('script');
+            script.id = 'remote-socketio-script';
+            script.src = `${backendUrl}/socket.io/socket.io.js`;
+            script.async = true;
+            const done = (ok) => {
+                if (ok) state.remoteSocketLoadedFor = backendUrl;
+                resolve(ok);
+            };
+            const timer = setTimeout(() => done(false), 6000);
+            script.onload = () => { clearTimeout(timer); done(typeof window.io === 'function'); };
+            script.onerror = () => { clearTimeout(timer); done(false); };
+            document.head.appendChild(script);
+        });
+    }
+
+    async function initSocket() {
+        if (state.socket) {
+            try { state.socket.disconnect(); } catch (e) {}
+            state.socket = null;
+        }
+        if (state.mode === 'demo') {
+            $('socket-pill').className = 'pill warn';
+            $('socket-pill').textContent = 'Demo: Giả lập trình duyệt';
+            return;
+        }
+        if (state.mode === 'remote') {
+            const ok = await ensureRemoteSocketScript(state.backendUrl);
+            if (!ok || typeof window.io !== 'function') {
+                $('socket-pill').className = 'pill warn';
+                $('socket-pill').textContent = 'Socket: Chưa nối được Tunnel';
+                return;
+            }
+        }
         if (typeof window.io !== 'function') {
             $('socket-pill').className = 'pill err';
             $('socket-pill').textContent = 'Socket: Không khả dụng';
             return;
         }
-        const socket = window.io();
+        const socket = state.mode === 'remote'
+            ? window.io(state.backendUrl, {
+                withCredentials: false,
+                auth: state.bearerToken ? { token: state.bearerToken } : {}
+            })
+            : window.io();
         state.socket = socket;
 
         socket.on('connect', () => {
@@ -1191,10 +1795,82 @@
         });
     }
 
-    function reconnectSocket() {
-        if (!state.socket) return;
-        state.socket.disconnect();
-        state.socket.connect();
+    async function reconnectSocket() {
+        await initSocket();
+    }
+
+    function resumeRunningDemoCampaigns() {
+        if (state.mode !== 'demo') return;
+        const db = loadDemoDb();
+        for (const ord of db.orders) {
+            if (ord.paymentStatus === 'paid' && ord.status === 'running') {
+                startDemoCampaignSimulation(ord.orderId);
+            }
+        }
+    }
+
+    async function applyRuntimeMode(nextMode, rawBackendUrl = '') {
+        showAlert('runtime-conn-msg', '');
+        clearAllDemoTimers();
+        stopOrderPolling();
+        clearActiveOrderView();
+        state.adminOrders = [];
+        state.adminCampaigns = [];
+        state.adminLoadingPromise = null;
+        state.campaignLogs.clear();
+
+        if (nextMode === 'remote') {
+            const cleanUrl = normalizeBackendUrl(rawBackendUrl);
+            if (!cleanUrl) {
+                showAlert('runtime-conn-msg', 'URL Backend Tunnel không hợp lệ (cần bắt đầu bằng https:// hoặc http://).', 'err');
+                return false;
+            }
+            state.mode = 'remote';
+            state.backendUrl = cleanUrl;
+            state.bearerToken = loadSavedRemoteToken(cleanUrl);
+            try {
+                localStorage.setItem(REMOTE_BACKEND_KEY, cleanUrl);
+                localStorage.removeItem('boost_prefer_demo_v1');
+            } catch (e) {}
+            renderRuntimeModeUI();
+            const ok = await refreshPublicConfig();
+            if (!ok) {
+                showAlert('runtime-conn-msg', `Không kết nối được Backend tại ${cleanUrl}. Hãy kiểm tra server + Cloudflare Tunnel đang chạy, hoặc bấm "Chế độ Demo tĩnh".`, 'err');
+                await initSocket();
+                return false;
+            }
+            await initSocket();
+            showAlert('runtime-conn-msg', `Đã kết nối Backend thật tại ${cleanUrl}.`, 'ok');
+            await updateCostAndDistribution();
+            return true;
+        }
+
+        if (nextMode === 'demo') {
+            state.mode = 'demo';
+            state.backendUrl = '';
+            state.bearerToken = '';
+            try { localStorage.setItem('boost_prefer_demo_v1', '1'); } catch (e) {}
+            renderRuntimeModeUI();
+            await initSocket();
+            await refreshPublicConfig();
+            resumeRunningDemoCampaigns();
+            await updateCostAndDistribution();
+            return true;
+        }
+
+        // Default same-origin live Express mode
+        state.mode = 'same-origin';
+        state.backendUrl = '';
+        state.bearerToken = '';
+        try {
+            localStorage.removeItem('boost_prefer_demo_v1');
+            localStorage.removeItem(REMOTE_BACKEND_KEY);
+        } catch (e) {}
+        renderRuntimeModeUI();
+        await initSocket();
+        await refreshPublicConfig();
+        await updateCostAndDistribution();
+        return true;
     }
 
     // ─── Event Wiring ─────────────────────────────────────────────────────────
@@ -1213,6 +1889,22 @@
     function bindEvents() {
         document.querySelectorAll('.tab-btn').forEach(btn => {
             btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+        });
+
+        $('connect-backend-btn').addEventListener('click', () => {
+            applyRuntimeMode('remote', $('backend-url-input').value);
+        });
+        $('backend-url-input').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                applyRuntimeMode('remote', $('backend-url-input').value);
+            }
+        });
+        $('use-demo-mode-btn').addEventListener('click', () => {
+            applyRuntimeMode('demo');
+        });
+        $('use-same-origin-btn').addEventListener('click', () => {
+            applyRuntimeMode('same-origin');
         });
 
         document.querySelectorAll('.preset-btn').forEach(btn => {
@@ -1377,12 +2069,45 @@
     async function boot() {
         bindEvents();
         renderRecentOrders();
-        initSocket();
-        await refreshPublicConfig();
-        await updateCostAndDistribution();
 
         const params = new URLSearchParams(window.location.search);
+        const backendParam = params.get('backend');
+        const modeParam = params.get('mode');
         const initialOrderId = params.get('orderId') || params.get('order');
+
+        let savedRemote = '';
+        let preferDemo = false;
+        try {
+            savedRemote = normalizeBackendUrl(localStorage.getItem(REMOTE_BACKEND_KEY));
+            preferDemo = localStorage.getItem('boost_prefer_demo_v1') === '1';
+        } catch (e) {}
+
+        if (backendParam) {
+            const ok = await applyRuntimeMode('remote', backendParam);
+            if (!ok) {
+                await applyRuntimeMode('demo');
+                showAlert('runtime-conn-msg', `Tunnel ${backendParam} hiện chưa phản hồi — đã tự chuyển sang Static Demo để xem giao diện.`, 'warn');
+            }
+        } else if (modeParam === 'demo') {
+            await applyRuntimeMode('demo');
+        } else if (isStaticHostingEnv()) {
+            if (savedRemote && !preferDemo) {
+                const ok = await applyRuntimeMode('remote', savedRemote);
+                if (!ok) {
+                    await applyRuntimeMode('demo');
+                    showAlert('runtime-conn-msg', `Tunnel đã lưu (${savedRemote}) hiện chưa chạy — đang mở Static Demo.`, 'warn');
+                }
+            } else {
+                await applyRuntimeMode('demo');
+            }
+        } else {
+            state.mode = 'same-origin';
+            renderRuntimeModeUI();
+            await initSocket();
+            await refreshPublicConfig();
+            await updateCostAndDistribution();
+        }
+
         if (initialOrderId) {
             await selectOrder(initialOrderId);
         }

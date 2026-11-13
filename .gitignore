@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+dist-demo/
 
 # Local secrets & runtime configs
 admin.json
@@ -9,6 +10,7 @@ proxy_config.json
 payment_config.json
 .env
 .env.*
+!.env.example
 
 # Runtime generated data
 orders/

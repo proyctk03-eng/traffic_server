@@ -5,7 +5,10 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test/**/*.test.js"
+    "test": "node --test --test-concurrency=1 test/**/*.test.js",
+    "build:demo": "node scripts/build-static-demo.js",
+    "tunnel:quick": "node scripts/cf-tunnel.js quick",
+    "cf:verify": "node scripts/cf-tunnel.js verify"
   },
   "keywords": [],
   "author": "",

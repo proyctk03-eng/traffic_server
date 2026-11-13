@@ -1,0 +1,48 @@
+name: Deploy Static Demo to Cloudflare Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check Cloudflare Secrets
+        id: check_cf
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACC: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -n "$CF_TOKEN" ] && [ -n "$CF_ACC" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping Cloudflare Pages CLI deploy: CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID not configured in GitHub Secrets."
+          fi
+
+      - name: Setup Node.js
+        if: steps.check_cf.outputs.ready == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Build static demo bundle
+        if: steps.check_cf.outputs.ready == 'true'
+        run: npm run build:demo
+
+      - name: Publish to Cloudflare Pages via Wrangler
+        if: steps.check_cf.outputs.ready == 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist-demo --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT || 'traffic-server-demo' }} --branch=main

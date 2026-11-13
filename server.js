@@ -7,11 +7,64 @@ const fs = require('fs');
 const crypto = require('crypto');
 const orderService = require('./orderService');
 
+function isAllowedCorsOrigin(origin) {
+    if (!origin || typeof origin !== 'string') return false;
+    let parsed;
+    try {
+        parsed = new URL(origin);
+    } catch {
+        return false;
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+
+    const customList = String(process.env.CORS_ORIGINS || '')
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
+    if (customList.includes('*')) return true;
+    if (customList.includes(origin)) return true;
+
+    const host = parsed.hostname.toLowerCase();
+    if (parsed.protocol === 'http:' && (host === 'localhost' || host === '127.0.0.1' || host === '[::1]')) {
+        return true;
+    }
+    if (parsed.protocol === 'https:') {
+        if (host === 'dtc245200452-hub.github.io') return true;
+        if (/^[a-z0-9-]+\.pages\.dev$/i.test(host)) return true;
+        if (/^[a-z0-9-]+\.trycloudflare\.com$/i.test(host)) return true;
+    }
+    return false;
+}
+
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, {
+    cors: {
+        origin: (origin, callback) => {
+            if (!origin || isAllowedCorsOrigin(origin)) return callback(null, true);
+            return callback(new Error('Origin not allowed by CORS'));
+        },
+        methods: ['GET', 'POST'],
+        credentials: false
+    }
+});
 
 const PORT = process.env.PORT || 3005;
+
+// ─── CORS (opt-in static hosts & Cloudflare Tunnel, bearer-only cross-origin) ─
+app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin && isAllowedCorsOrigin(origin)) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Vary', 'Origin');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Auth-Mode');
+    }
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(204);
+    }
+    next();
+});
 
 // ─── Setup JSON and body parsing ───────────────────────────────────────────────
 app.use(express.json());
@@ -1029,12 +1082,32 @@ function getUserRole(username) {
     return 'admin';
 }
 
+function resolveSessionFromAuth({ cookieHeader, authorizationHeader, authToken } = {}) {
+    const cookies = parseCookies(cookieHeader);
+    let sessionToken = cookies && cookies.session_token ? String(cookies.session_token).trim() : null;
+    if (!sessionToken && typeof authorizationHeader === 'string') {
+        const bearerMatch = authorizationHeader.match(/^Bearer\s+([^\s]+)$/i);
+        if (bearerMatch) {
+            sessionToken = bearerMatch[1].trim();
+        }
+    }
+    if (!sessionToken && typeof authToken === 'string' && authToken.trim()) {
+        sessionToken = authToken.trim();
+    }
+    const sessVal = sessionToken ? activeSessions.get(sessionToken) : null;
+    const username = (sessVal && typeof sessVal === 'object') ? sessVal.username : sessVal;
+    const role = (sessVal && typeof sessVal === 'object') ? sessVal.role : getUserRole(username);
+    return { sessionToken, username: username || null, role: role || null };
+}
+
 app.use((req, res, next) => {
-    const cookies = parseCookies(req.headers.cookie);
-    req.sessionToken = cookies ? cookies.session_token : null;
-    const sessVal = req.sessionToken ? activeSessions.get(req.sessionToken) : null;
-    req.username = (sessVal && typeof sessVal === 'object') ? sessVal.username : sessVal;
-    req.userRole = (sessVal && typeof sessVal === 'object') ? sessVal.role : getUserRole(req.username);
+    const resolved = resolveSessionFromAuth({
+        cookieHeader: req.headers.cookie,
+        authorizationHeader: req.headers.authorization
+    });
+    req.sessionToken = resolved.sessionToken;
+    req.username = resolved.username;
+    req.userRole = resolved.role;
     req.isAuthenticated = !!req.username;
     next();
 });
@@ -1090,7 +1163,8 @@ app.post('/api/login', (req, res) => {
             cookieOptions.maxAge = 30 * 24 * 60 * 60 * 1000;
         }
         res.cookie('session_token', token, cookieOptions);
-        return res.json({ success: true, role, username });
+        const wantsBearer = String(req.headers['x-auth-mode'] || '').toLowerCase() === 'bearer';
+        return res.json(wantsBearer ? { success: true, role, username, token } : { success: true, role, username });
     }
     return res.status(401).json({ success: false, message: 'Tai khoan hoac mat khau khong chinh xac.' });
 });
@@ -1462,11 +1536,13 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // ─── Socket.IO ─────────────────────────────────────────────────────────────────
 io.on('connection', (socket) => {
-    const cookies = parseCookies(socket.handshake.headers.cookie);
-    const sessionToken = cookies ? cookies.session_token : null;
-    const sessVal = sessionToken ? activeSessions.get(sessionToken) : null;
-    const socketUsername = (sessVal && typeof sessVal === 'object') ? sessVal.username : sessVal;
-    const socketRole = (sessVal && typeof sessVal === 'object') ? sessVal.role : getUserRole(socketUsername);
+    const resolvedSocketAuth = resolveSessionFromAuth({
+        cookieHeader: socket.handshake.headers.cookie,
+        authorizationHeader: socket.handshake.headers.authorization,
+        authToken: socket.handshake.auth && socket.handshake.auth.token
+    });
+    const socketUsername = resolvedSocketAuth.username;
+    const socketRole = resolvedSocketAuth.role;
 
     console.log(`Socket connected: ${socket.id} (${socketUsername || 'anon'} [${socketRole}])`);
 
@@ -1534,4 +1610,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { app, server, campaigns, createCampaignState, scheduleTick, completeCampaign, globalProxyPool, loadCampaignsFromDisk };
+module.exports = { app, server, campaigns, createCampaignState, scheduleTick, completeCampaign, globalProxyPool, loadCampaignsFromDisk, isAllowedCorsOrigin };

@@ -1,0 +1,17 @@
+node_modules
+dist-demo
+orders
+campaigns
+admin.json
+sessions.json
+telegram_config.json
+proxy_config.json
+payment_config.json
+.env
+.env.*
+.git
+.github
+.agents
+test
+e2e_tests
+*.log
