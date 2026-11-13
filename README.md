@@ -45,12 +45,12 @@ Repository đã tích hợp sẵn script build tĩnh (`npm run build:demo` tạo
 
 - **GitHub Pages (`.github/workflows/pages.yml`):**
   1. Trên GitHub vào **Settings → Pages → Build and deployment → Source**, chọn **GitHub Actions**.
-  2. Mỗi khi push lên `main`, web demo tự cập nhật tại `https://<user>.github.io/<repo>/`.
+  2. Mỗi khi push lên `main`, web demo tự cập nhật tại `https://dtc245200452-hub.github.io/traffic_server/`.
 - **Cloudflare Pages miễn phí `*.pages.dev`:**
   - *Cách A (không cần tạo API Token):* Vào Cloudflare Dashboard → **Workers & Pages → Create → Pages → Connect to Git**, chọn repo GitHub này, đặt:
     - **Build command:** `npm run build:demo`
     - **Build output directory:** `dist-demo`
-  - *Cách B (tự động deploy qua GitHub Actions `.github/workflows/cloudflare-pages.yml`):* Thêm 2 GitHub Secrets `CLOUDFLARE_API_TOKEN` (Scoped API Token có quyền `Cloudflare Pages: Edit`) và `CLOUDFLARE_ACCOUNT_ID` vào **Settings → Secrets and variables → Actions**.
+  - *Cách B (tự động deploy qua GitHub Actions `.github/workflows/cloudflare-pages.yml`):* Thêm 2 GitHub Secrets `CLOUDFLARE_API_TOKEN` (Scoped API Token có quyền `Cloudflare Pages: Edit` + `Account Settings: Read`) và `CLOUDFLARE_ACCOUNT_ID` vào **Settings → Secrets and variables → Actions** (workflow tự tạo Pages project `traffic-server-demo` nếu chưa tồn tại).
 
 ### 2. Nối Web Demo với Backend thật qua Cloudflare Quick Tunnel (Miễn phí)
 

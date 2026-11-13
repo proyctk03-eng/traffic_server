@@ -11,6 +11,7 @@ const { ROOT_DIR, setupServerEnv } = require('./helpers/test_env');
 const { buildStaticDemo } = require('../scripts/build-static-demo');
 const {
     verifyCloudflareSetup,
+    ensurePagesProject,
     parseTryCloudflareUrl,
     buildConnectUrls
 } = require('../scripts/cf-tunnel');
@@ -270,28 +271,58 @@ describe('Cloudflare Integration, CORS/Bearer Auth & Static Demo Dual-Mode', () 
 
         await assert.rejects(() => verifyCloudflareSetup({ token: '' }), /CLOUDFLARE_API_TOKEN/);
 
-        axios.request = async ({ url }) => {
-            if (url.endsWith('/user/tokens/verify')) {
-                return { status: 200, data: { success: true, result: { status: 'active' } } };
-            }
-            if (url.endsWith('/accounts')) {
-                return { status: 200, data: { success: true, result: [{ id: 'acc_123', name: 'Free Account' }] } };
-            }
-            if (url.endsWith('/accounts/acc_123/pages/projects')) {
-                return { status: 200, data: { success: true, result: [{ name: 'traffic-server-demo', subdomain: 'traffic-server-demo.pages.dev' }] } };
-            }
-            if (url.includes('/cfd_tunnel')) {
-                return { status: 200, data: { success: true, result: [{ id: 'tun_1', name: 'demo-tun', status: 'healthy' }] } };
-            }
-            return { status: 404, data: { success: false, errors: [{ message: 'Not found' }] } };
-        };
+        try {
+            axios.request = async ({ url, method, data }) => {
+                if (url.endsWith('/user/tokens/verify')) {
+                    return { status: 200, data: { success: true, result: { status: 'active' } } };
+                }
+                if (url.endsWith('/accounts')) {
+                    return { status: 200, data: { success: true, result: [{ id: 'acc_123', name: 'Free Account' }] } };
+                }
+                if (url.endsWith('/accounts/acc_123/pages/projects')) {
+                    if (method === 'POST') {
+                        return { status: 200, data: { success: true, result: { name: data.name, subdomain: `${data.name}.pages.dev` } } };
+                    }
+                    return { status: 200, data: { success: true, result: [{ name: 'traffic-server-demo', subdomain: 'traffic-server-demo.pages.dev' }] } };
+                }
+                if (url.endsWith('/accounts/acc_123/pages/projects/new-demo-proj') && method === 'GET') {
+                    return { status: 404, data: { success: false, errors: [{ code: 8000007, message: 'Project not found' }] } };
+                }
+                if (url.includes('/cfd_tunnel')) {
+                    return { status: 200, data: { success: true, result: [{ id: 'tun_1', name: 'demo-tun', status: 'healthy' }] } };
+                }
+                return { status: 404, data: { success: false, errors: [{ message: 'Not found' }] } };
+            };
 
-        const report = await verifyCloudflareSetup({ token: 'cf_test_token_123' });
-        assert.equal(report.tokenStatus, 'active');
-        assert.equal(report.accountId, 'acc_123');
-        assert.equal(report.pagesProjects[0].url, 'https://traffic-server-demo.pages.dev');
-        assert.equal(report.tunnels[0].name, 'demo-tun');
-        axios.request = originalAxiosRequest;
+            const report = await verifyCloudflareSetup({ token: 'cf_test_token_123' });
+            assert.equal(report.tokenStatus, 'active');
+            assert.equal(report.accountId, 'acc_123');
+            assert.equal(report.warning, null);
+            assert.equal(report.pagesProjects[0].url, 'https://traffic-server-demo.pages.dev');
+            assert.equal(report.tunnels[0].name, 'demo-tun');
+
+            const ensured = await ensurePagesProject({ token: 'cf_test_token_123', projectName: 'new-demo-proj' });
+            assert.equal(ensured.created, true);
+            assert.equal(ensured.project.subdomain, 'new-demo-proj.pages.dev');
+
+            // Verify helpful warning when scoped token cannot list /accounts
+            axios.request = async ({ url }) => {
+                if (url.endsWith('/user/tokens/verify')) return { status: 200, data: { success: true, result: { status: 'active' } } };
+                if (url.endsWith('/accounts')) return { status: 200, data: { success: true, result: [] } };
+                return { status: 403, data: { success: false, errors: [{ message: 'Unauthorized' }] } };
+            };
+            const prevAcc = process.env.CLOUDFLARE_ACCOUNT_ID;
+            delete process.env.CLOUDFLARE_ACCOUNT_ID;
+            try {
+                const scopedReport = await verifyCloudflareSetup({ token: 'cf_scoped_token' });
+                assert.equal(scopedReport.accountId, '');
+                assert.match(scopedReport.warning || '', /Account Settings/);
+            } finally {
+                if (prevAcc !== undefined) process.env.CLOUDFLARE_ACCOUNT_ID = prevAcc;
+            }
+        } finally {
+            axios.request = originalAxiosRequest;
+        }
     });
 
     it('Browser E2E on static subpath (/traffic_server/): Static Demo simulation works offline AND ?backend= connects cross-origin to live server', async (t) => {

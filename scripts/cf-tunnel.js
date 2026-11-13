@@ -64,6 +64,16 @@ async function cloudflareApiRequest(endpoint, options = {}) {
 /**
  * Verify Cloudflare API token, inspect accounts, Pages projects (*.pages.dev), and Tunnels.
  */
+async function resolveAccountId({ token, accountId } = {}) {
+    const explicit = String(accountId || process.env.CLOUDFLARE_ACCOUNT_ID || '').trim();
+    const accounts = await cloudflareApiRequest('/accounts', { token });
+    const list = Array.isArray(accounts) ? accounts.map(a => ({ id: a.id, name: a.name })) : [];
+    return {
+        accounts: list,
+        accountId: explicit || (list[0] && list[0].id) || ''
+    };
+}
+
 async function verifyCloudflareSetup(options = {}) {
     const token = String(options.token || process.env.CLOUDFLARE_API_TOKEN || '').trim();
     if (!token) {
@@ -71,15 +81,16 @@ async function verifyCloudflareSetup(options = {}) {
     }
 
     const tokenInfo = await cloudflareApiRequest('/user/tokens/verify', { token });
-    const accounts = await cloudflareApiRequest('/accounts', { token });
-    const resolvedAccountId = String(
-        options.accountId || process.env.CLOUDFLARE_ACCOUNT_ID || (accounts[0] && accounts[0].id) || ''
-    ).trim();
+    const { accounts, accountId: resolvedAccountId } = await resolveAccountId({
+        token,
+        accountId: options.accountId
+    });
 
     let pagesProjects = [];
     let pagesError = null;
     let tunnels = [];
     let tunnelError = null;
+    let warning = null;
 
     if (resolvedAccountId) {
         try {
@@ -103,17 +114,50 @@ async function verifyCloudflareSetup(options = {}) {
         } catch (err) {
             tunnelError = err.message;
         }
+    } else if (accounts.length === 0) {
+        warning = 'Token active nhung GET /accounts tra ve rong ([]): token thieu quyen "Account -> Account Settings -> Read" hoac chua cau hinh CLOUDFLARE_ACCOUNT_ID trong .env / GitHub Secrets.';
     }
 
     return {
         tokenStatus: tokenInfo && tokenInfo.status ? tokenInfo.status : 'active',
-        accounts: Array.isArray(accounts) ? accounts.map(a => ({ id: a.id, name: a.name })) : [],
+        accounts,
         accountId: resolvedAccountId,
         pagesProjects,
         pagesError,
         tunnels,
-        tunnelError
+        tunnelError,
+        warning
     };
+}
+
+async function ensurePagesProject(options = {}) {
+    const token = String(options.token || process.env.CLOUDFLARE_API_TOKEN || '').trim();
+    if (!token) {
+        throw new Error('Missing CLOUDFLARE_API_TOKEN');
+    }
+    const projectName = String(options.projectName || process.env.CLOUDFLARE_PAGES_PROJECT || 'traffic-server-demo').trim();
+    const productionBranch = String(options.productionBranch || 'main').trim() || 'main';
+    const { accountId } = await resolveAccountId({ token, accountId: options.accountId });
+    if (!accountId) {
+        throw new Error('Missing CLOUDFLARE_ACCOUNT_ID (va token khong tu lay duoc /accounts).');
+    }
+
+    try {
+        const existing = await cloudflareApiRequest(`/accounts/${accountId}/pages/projects/${encodeURIComponent(projectName)}`, { token });
+        return { created: false, project: existing, accountId };
+    } catch (err) {
+        if (err.status !== 404) throw err;
+    }
+
+    const created = await cloudflareApiRequest(`/accounts/${accountId}/pages/projects`, {
+        method: 'POST',
+        token,
+        data: {
+            name: projectName,
+            production_branch: productionBranch
+        }
+    });
+    return { created: true, project: created, accountId };
 }
 
 function parseTryCloudflareUrl(text) {
@@ -186,10 +230,23 @@ async function main() {
         console.log('Cloudflare Token Status:', report.tokenStatus);
         console.log('Accounts:', report.accounts);
         console.log('Resolved Account ID:', report.accountId || '(none)');
+        if (report.warning) console.log('Warning:', report.warning);
         if (report.pagesError) console.log('Pages Projects check:', report.pagesError);
         else console.log('Pages Projects:', report.pagesProjects);
         if (report.tunnelError) console.log('Tunnels check:', report.tunnelError);
         else console.log('Tunnels:', report.tunnels);
+        return;
+    }
+
+    if (cmd === 'ensure-pages') {
+        const result = await ensurePagesProject({
+            projectName: arg1 || process.env.CLOUDFLARE_PAGES_PROJECT || 'traffic-server-demo'
+        });
+        console.log(
+            result.created
+                ? `[cf-tunnel] Created Pages project: ${result.project.name} (https://${result.project.subdomain || result.project.name + '.pages.dev'})`
+                : `[cf-tunnel] Pages project ready: ${result.project.name}`
+        );
         return;
     }
 
@@ -203,6 +260,7 @@ async function main() {
     console.log('Usage:');
     console.log('  node scripts/cf-tunnel.js quick [port] [pagesUrl]   # Mo Quick Tunnel (*.trycloudflare.com)');
     console.log('  node scripts/cf-tunnel.js verify                    # Kiem tra CLOUDFLARE_API_TOKEN & Pages/Tunnels');
+    console.log('  node scripts/cf-tunnel.js ensure-pages [name]       # Tao Pages project neu chua ton tai');
 }
 
 if (require.main === module) {
@@ -216,7 +274,9 @@ module.exports = {
     CF_API_BASE,
     loadDotEnv,
     cloudflareApiRequest,
+    resolveAccountId,
     verifyCloudflareSetup,
+    ensurePagesProject,
     parseTryCloudflareUrl,
     buildConnectUrls,
     runQuickTunnel
