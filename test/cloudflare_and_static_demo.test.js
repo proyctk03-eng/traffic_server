@@ -159,6 +159,7 @@ describe('Cloudflare Integration, CORS/Bearer Auth & Static Demo Dual-Mode', () 
     it('CORS origin allowlist validates Cloudflare Pages, GitHub Pages, TryCloudflare, localhost and rejects untrusted origins', () => {
         const { isAllowedCorsOrigin } = env.serverModule;
         assert.equal(isAllowedCorsOrigin('https://traffic-server-demo.pages.dev'), true);
+        assert.equal(isAllowedCorsOrigin('https://proyctk03-eng.github.io'), true);
         assert.equal(isAllowedCorsOrigin('https://dtc245200452-hub.github.io'), true);
         assert.equal(isAllowedCorsOrigin('https://fast-tunnel-123.trycloudflare.com'), true);
         assert.equal(isAllowedCorsOrigin('http://localhost:3005'), true);

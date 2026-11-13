@@ -45,7 +45,7 @@ Repository đã tích hợp sẵn script build tĩnh (`npm run build:demo` tạo
 
 - **GitHub Pages (`.github/workflows/pages.yml`):**
   1. Trên GitHub vào **Settings → Pages → Build and deployment → Source**, chọn **GitHub Actions**.
-  2. Mỗi khi push lên `main`, web demo tự cập nhật tại `https://dtc245200452-hub.github.io/traffic_server/`.
+  2. Mỗi khi push lên `main`, web demo tự cập nhật tại `https://proyctk03-eng.github.io/traffic_server/`.
 - **Cloudflare Pages miễn phí `*.pages.dev`:**
   - *Cách A (không cần tạo API Token):* Vào Cloudflare Dashboard → **Workers & Pages → Create → Pages → Connect to Git**, chọn repo GitHub này, đặt:
     - **Build command:** `npm run build:demo`

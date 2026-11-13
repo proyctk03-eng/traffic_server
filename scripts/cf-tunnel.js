@@ -4,7 +4,7 @@ const { spawn, spawnSync } = require('child_process');
 const axios = require('axios');
 
 const CF_API_BASE = 'https://api.cloudflare.com/client/v4';
-const DEFAULT_GH_PAGES_URL = 'https://dtc245200452-hub.github.io/traffic_server/';
+const DEFAULT_GH_PAGES_URL = 'https://proyctk03-eng.github.io/traffic_server/';
 
 /**
  * Load simple KEY=VALUE lines from local .env without overriding already-set env vars.

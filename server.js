@@ -29,7 +29,7 @@ function isAllowedCorsOrigin(origin) {
         return true;
     }
     if (parsed.protocol === 'https:') {
-        if (host === 'dtc245200452-hub.github.io') return true;
+        if (host === 'proyctk03-eng.github.io' || host === 'dtc245200452-hub.github.io') return true;
         if (/^[a-z0-9-]+\.pages\.dev$/i.test(host)) return true;
         if (/^[a-z0-9-]+\.trycloudflare\.com$/i.test(host)) return true;
     }
