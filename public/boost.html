@@ -336,12 +336,17 @@
                 <div style="display:flex; flex-wrap:wrap; align-items:center; gap:6px; flex:1; min-width:260px; max-width:620px; justify-content:flex-end;">
                     <input type="url" id="backend-url-input" placeholder="https://xxxx.trycloudflare.com (URL Cloudflare Tunnel)" style="flex:1; min-width:190px; padding:5px 9px; font-size:12.5px;">
                     <button type="button" class="btn btn-sm btn-primary" id="connect-backend-btn">Kết nối Tunnel</button>
+                    <button type="button" class="btn btn-sm hidden" id="copy-backend-link-btn">Copy link ?backend=...</button>
                     <button type="button" class="btn btn-sm" id="use-demo-mode-btn">Chế độ Demo tĩnh</button>
                     <button type="button" class="btn btn-sm hidden" id="use-same-origin-btn">Về Same-Origin</button>
                 </div>
             </div>
             <div id="runtime-conn-msg" style="margin-top:6px;"></div>
         </section>
+
+        <div id="admin-default-pw-banner" class="alert warn hidden" style="margin-bottom:12px;">
+            <strong>Cảnh báo bảo mật Admin:</strong> Hệ thống đang dùng mật khẩu mặc định (<code>admin123456</code>). Vui lòng đổi mật khẩu Admin qua <code>admin.json</code> hoặc API cấu hình trước khi public/chia sẻ Tunnel!
+        </div>
 
         <section class="spec-strip">
             <div><strong>Thực thi đúng nền tảng:</strong> <span id="spec-mode">Request HTTP nhẹ (Axios + KiotProxy), giữ IP 2–5s, 0 trình duyệt</span></div>
@@ -380,8 +385,12 @@
 
                             <div class="field">
                                 <label for="f-proxy">KiotProxy Key *</label>
-                                <input type="text" id="f-proxy" placeholder="Kxxxxxxxxxxxxxxxxxxxx..." required>
+                                <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
+                                    <input type="text" id="f-proxy" placeholder="Kxxxxxxxxxxxxxxxxxxxx..." required style="flex:1; min-width:180px;">
+                                    <button type="button" class="btn btn-sm" id="validate-proxy-btn">Kiểm tra Key KiotProxy</button>
+                                </div>
                                 <div class="hint">Key xoay IP riêng cho đơn hàng (server sẽ ẩn bớt ký tự ở API công khai).</div>
+                                <div id="proxy-validate-msg"></div>
                             </div>
 
                             <div class="form-row">
@@ -429,6 +438,27 @@
                                     <div class="field"><label for="cb-after">14h–18h (Chiều cao điểm)</label><select id="cb-after"><option value="low">Thấp (0.3x)</option><option value="medium">TB (1.0x)</option><option value="high" selected>Cao (1.8x)</option></select></div>
                                     <div class="field"><label for="cb-eve">18h–22h (Tối cao điểm)</label><select id="cb-eve"><option value="low">Thấp (0.3x)</option><option value="medium">TB (1.0x)</option><option value="high" selected>Cao (1.8x)</option></select></div>
                                     <div class="field"><label for="cb-late">22h–00h (Khuya)</label><select id="cb-late"><option value="low">Thấp (0.3x)</option><option value="medium" selected>TB (1.0x)</option><option value="high">Cao (1.8x)</option></select></div>
+                                </div>
+                            </div>
+
+                            <div class="row-2" style="margin-top:10px;">
+                                <div class="field" style="margin-bottom:0;">
+                                    <label for="f-dwell-preset">Thời gian lưu trang (Dwell)</label>
+                                    <select id="f-dwell-preset">
+                                        <option value="short" selected>Nhanh (2–5s · Mặc định)</option>
+                                        <option value="medium">Trung bình (5–10s)</option>
+                                        <option value="long">Đọc sâu (10–20s)</option>
+                                    </select>
+                                    <div class="hint">Mô phỏng thời gian đọc trang trước khi đóng hoặc chuyển link.</div>
+                                </div>
+                                <div class="field" style="margin-bottom:0;">
+                                    <label for="f-device-profile">Hồ sơ thiết bị (User-Agent)</label>
+                                    <select id="f-device-profile">
+                                        <option value="mixed" selected>Hỗn hợp Mobile + Desktop (Mặc định)</option>
+                                        <option value="mobile">Mobile (iOS / Android)</option>
+                                        <option value="desktop">Desktop (Windows / macOS)</option>
+                                    </select>
+                                    <div class="hint">Phân phối hồ sơ trình duyệt/thiết bị cho mỗi lượt truy cập.</div>
                                 </div>
                             </div>
 
@@ -515,6 +545,7 @@
                         <div class="kv"><span>Tên / URL đích</span><span id="ao-target" class="mono" style="word-break:break-all;text-align:right;max-width:70%;">--</span></div>
                         <div class="kv"><span>Proxy Key (đã che)</span><code id="ao-proxy">--</code></div>
                         <div class="kv"><span>Mục tiêu / Thời lượng / Kiểu</span><span id="ao-plan">--</span></div>
+                        <div class="kv"><span>Hành vi / Thiết bị</span><span id="ao-profile">--</span></div>
                         <div class="kv"><span>Số tiền cần thanh toán</span><strong id="ao-amount" style="color:var(--accent);">--</strong></div>
 
                         <!-- VietQR Payment Box -->
@@ -529,7 +560,7 @@
                                     <div id="ao-qr-fallback" class="hidden" style="color:#0f172a;font-size:12px;padding:8px;">
                                         Không tải được ảnh VietQR (kiểm tra mạng). Vui lòng chuyển khoản thủ công theo thông tin bên cạnh.
                                     </div>
-                                    <div style="color:#0f172a;font-size:11.5px;margin-top:6px;">Hạn QR demo: <strong id="ao-countdown">15:00</strong></div>
+                                    <div style="color:#0f172a;font-size:11.5px;margin-top:6px;">Hạn thanh toán: <strong id="ao-countdown">30:00</strong></div>
                                 </div>
                                 <div>
                                     <div class="kv"><span>Ngân hàng</span><strong id="ao-bank">--</strong></div>
@@ -576,6 +607,7 @@
                             <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:8px;">
                                 <button type="button" class="btn" id="refresh-order-btn">Làm mới trạng thái</button>
                                 <button type="button" class="btn" id="download-report-btn">Tải báo cáo (.txt)</button>
+                                <button type="button" class="btn" id="download-csv-btn">Xuất CSV (.csv)</button>
                                 <button type="button" class="btn btn-danger hidden" id="inline-admin-stop-btn">Admin: Dừng chiến dịch</button>
                             </div>
                         </div>
@@ -619,7 +651,8 @@
                                 <option value="pending_payment">Chờ thanh toán</option>
                                 <option value="running">Đang chạy</option>
                                 <option value="completed">Hoàn tất</option>
-                                <option value="stopped">Đã dừng / Hết giờ</option>
+                                <option value="expired">Hết hạn thanh toán</option>
+                                <option value="stopped">Đã dừng</option>
                             </select>
                             <button type="button" class="btn btn-sm" id="adm-refresh-orders-btn">Làm mới</button>
                         </div>
@@ -783,6 +816,9 @@
 
     <script src="/socket.io/socket.io.js"></script>
     <script src="/js/timeDistribution.js"></script>
+    <script src="/js/boost-shared.js"></script>
+    <script src="/js/boost-demo.js"></script>
+    <script src="/js/boost-ui.js"></script>
     <script src="/js/boost.js"></script>
 </body>
 </html>

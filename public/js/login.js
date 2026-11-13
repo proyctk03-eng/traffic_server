@@ -50,9 +50,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: JSON.stringify({ username, password, rememberMe })
             });
 
-            const data = await response.json();
+            let data = {};
+            try {
+                data = await response.json();
+            } catch (e) {
+                data = {};
+            }
 
             if (response.ok && data.success) {
+                if (data.role && data.role !== 'admin') {
+                    showError('Chỉ hỗ trợ đăng nhập tài khoản Quản trị (Admin).');
+                    return;
+                }
                 // Save or clear remember credentials
                 try {
                     if (rememberMe) {

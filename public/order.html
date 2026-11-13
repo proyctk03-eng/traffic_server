@@ -143,14 +143,19 @@ calc();
 
 function show(step) { ['step1', 'step2', 'step3'].forEach(s => $(s).classList.toggle('hidden', s !== step)); }
 
-function updateCountdown(createdAt) {
+function updateCountdown(createdAt, expiresAt) {
   if (cdTimer) clearInterval(cdTimer);
-  const deadline = (createdAt || Date.now()) + 15 * 60000;
+  const deadline = expiresAt ? Number(expiresAt) : ((createdAt || Date.now()) + 30 * 60000);
   const tick = () => {
     const left = Math.max(0, Math.floor((deadline - Date.now()) / 1000));
     const m = String(Math.floor(left / 60)).padStart(2, '0');
     const s = String(left % 60).padStart(2, '0');
-    $('countdown').textContent = left > 0 ? `Thời gian chờ gợi ý: ${m}:${s}` : 'Đang tiếp tục chờ xác nhận chuyển khoản...';
+    $('countdown').textContent = left > 0 ? `Hạn thanh toán còn lại: ${m}:${s}` : 'Đơn hàng đã hết hạn thanh toán (quá 30 phút).';
+    if (left <= 0) {
+      clearInterval(cdTimer);
+      cdTimer = null;
+      poll();
+    }
   };
   tick();
   cdTimer = setInterval(tick, 1000);
@@ -176,7 +181,10 @@ $('btnOrder').onclick = async () => {
 
 function render(o) {
   lastOrder = o;
-  if (!o.campaignId) {
+  const p = o.progress || { successVisits: 0, targetLimit: o.targetClicks };
+  const st = p.status || o.effectiveStatus || o.status || 'pending_payment';
+  const isExpired = st === 'expired' || (o.paymentStatus !== 'paid' && o.expiresAt && Date.now() >= Number(o.expiresAt));
+  if (!o.campaignId && !isExpired && o.paymentStatus !== 'paid') {
     show('step2');
     $('qr').src = o.vietQrUrl;
     $('bBank').textContent = o.bankInfo.bankName || o.bankInfo.bankId;
@@ -187,12 +195,11 @@ function render(o) {
     $('bCode').textContent = o.orderCode;
     $('oid').textContent = o.orderId;
     $('trackLink').href = '/track.html?order=' + encodeURIComponent(o.orderId);
-    updateCountdown(o.createdAt);
+    updateCountdown(o.createdAt, o.expiresAt);
     return;
   }
   if (cdTimer) { clearInterval(cdTimer); cdTimer = null; }
   show('step3');
-  const p = o.progress || { successVisits: 0, targetLimit: o.targetClicks };
   const pct = p.targetLimit ? Math.min(100, Math.floor(p.successVisits / p.targetLimit * 100)) : 0;
   $('pct').textContent = pct + '%';
   $('barFill').style.width = pct + '%';
@@ -200,9 +207,13 @@ function render(o) {
   $('pCode').textContent = o.orderCode;
   $('pUrl').textContent = o.targetUrl;
   $('pProxy').textContent = o.proxyKeyMasked || 'KiotProxy';
-  $('pEnd').textContent = p.endTime ? new Date(p.endTime).toLocaleString('vi-VN') : '—';
-  const done = p.status === 'completed' || p.status === 'expired' || p.status === 'stopped';
-  $('runBadge').textContent = done ? (p.status === 'completed' ? 'Hoàn thành' : p.status === 'expired' ? 'Hết giờ' : 'Đã dừng') : 'Đã thanh toán · Đang chạy';
+  $('pEnd').textContent = isExpired
+    ? (o.expiresAt ? new Date(o.expiresAt).toLocaleString('vi-VN') : 'Hết hạn (30p)')
+    : (p.endTime ? new Date(p.endTime).toLocaleString('vi-VN') : '—');
+  const done = isExpired || st === 'completed' || st === 'expired' || st === 'stopped';
+  $('runBadge').textContent = done
+    ? ((isExpired || st === 'expired') ? 'Hết hạn thanh toán' : st === 'completed' ? 'Hoàn thành' : 'Đã dừng')
+    : 'Đã thanh toán · Đang chạy';
   if (done) stopPolling();
 }
 

@@ -11,8 +11,30 @@ function transformHtmlForStaticHosting(html) {
             '<script src="/socket.io/socket.io.js"></script>',
             '<script>window.__STATIC_DEMO_MODE__ = true;</script>'
         )
-        .replace('<script src="/js/timeDistribution.js"></script>', '<script src="./js/timeDistribution.js"></script>')
-        .replace('<script src="/js/boost.js"></script>', '<script src="./js/boost.js"></script>');
+        .replace(
+            /<script(\s+[^>]*)src=["']\/js\/([^"']+)["']([^>]*)><\/script>/gi,
+            '<script$1src="./js/$2"$3></script>'
+        );
+}
+
+/**
+ * Extract local ./js/* script paths referenced by transformed static HTML.
+ */
+function collectReferencedStaticJs(staticHtml) {
+    const found = [];
+    const seen = new Set();
+    const re = /<script\s+[^>]*src=["']\.\/js\/([^"'?#]+)["'][^>]*>\s*<\/script>/gi;
+    let m;
+    while ((m = re.exec(staticHtml)) !== null) {
+        const rel = String(m[1] || '').trim().replace(/^\/+/, '');
+        if (!rel || seen.has(rel)) continue;
+        seen.add(rel);
+        found.push(rel);
+    }
+    if (found.length === 0) {
+        return ['timeDistribution.js', 'boost-shared.js', 'boost-demo.js', 'boost-ui.js', 'boost.js'];
+    }
+    return found;
 }
 
 /**
@@ -25,30 +47,42 @@ function buildStaticDemo(options = {}) {
     const jsOutDir = path.join(outDir, 'js');
 
     const boostHtmlPath = path.join(publicDir, 'boost.html');
-    const distJsPath = path.join(publicDir, 'js', 'timeDistribution.js');
-    const boostJsPath = path.join(publicDir, 'js', 'boost.js');
 
     if (!fs.existsSync(boostHtmlPath)) {
         throw new Error(`Missing source HTML: ${boostHtmlPath}`);
     }
 
-    fs.rmSync(outDir, { recursive: true, force: true });
-    fs.mkdirSync(jsOutDir, { recursive: true });
-
     const rawHtml = fs.readFileSync(boostHtmlPath, 'utf-8');
     const staticHtml = transformHtmlForStaticHosting(rawHtml);
+    const jsFiles = collectReferencedStaticJs(staticHtml);
+
+    for (const rel of jsFiles) {
+        const srcJsPath = path.join(publicDir, 'js', rel);
+        if (!fs.existsSync(srcJsPath)) {
+            throw new Error(`Missing referenced static JS asset: ${srcJsPath}`);
+        }
+    }
+
+    fs.rmSync(outDir, { recursive: true, force: true });
+    fs.mkdirSync(jsOutDir, { recursive: true });
 
     fs.writeFileSync(path.join(outDir, 'index.html'), staticHtml, 'utf-8');
     fs.writeFileSync(path.join(outDir, 'boost.html'), staticHtml, 'utf-8');
     fs.writeFileSync(path.join(outDir, '404.html'), staticHtml, 'utf-8');
     fs.writeFileSync(path.join(outDir, '.nojekyll'), '', 'utf-8');
 
-    fs.copyFileSync(distJsPath, path.join(jsOutDir, 'timeDistribution.js'));
-    fs.copyFileSync(boostJsPath, path.join(jsOutDir, 'boost.js'));
+    const copiedRelFiles = [];
+    for (const rel of jsFiles) {
+        const srcJsPath = path.join(publicDir, 'js', rel);
+        const destJsPath = path.join(jsOutDir, rel);
+        fs.mkdirSync(path.dirname(destJsPath), { recursive: true });
+        fs.copyFileSync(srcJsPath, destJsPath);
+        copiedRelFiles.push(`js/${rel}`);
+    }
 
     return {
         outDir,
-        files: ['index.html', 'boost.html', '404.html', '.nojekyll', 'js/timeDistribution.js', 'js/boost.js']
+        files: ['index.html', 'boost.html', '404.html', '.nojekyll', ...copiedRelFiles]
     };
 }
 

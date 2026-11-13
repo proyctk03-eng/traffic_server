@@ -471,46 +471,36 @@ function renderCampaignTabs(campaignList) {
 let currentUserRole = 'admin';
 
 function applyRoleUI(role, username) {
-    currentUserRole = role;
-    const isGuest = role === 'guest';
+    currentUserRole = role === 'admin' ? 'admin' : 'admin';
 
-    document.body.classList.toggle('guest-mode', isGuest);
+    document.body.classList.remove('guest-mode');
 
-    // Hide/show Add campaign button
-    if (addCampaignBtn) addCampaignBtn.style.display = isGuest ? 'none' : 'inline-flex';
+    if (addCampaignBtn) addCampaignBtn.style.display = 'inline-flex';
 
-    // Hide/show Global Proxy Config & Commercial Orders sections
     const proxySection = document.querySelector('.proxy-pool-section');
-    if (proxySection) proxySection.style.display = isGuest ? 'none' : 'block';
+    if (proxySection) proxySection.style.display = 'block';
     const commercialSection = document.getElementById('commercial-orders-section');
-    if (commercialSection) commercialSection.style.display = isGuest ? 'none' : 'block';
-    if (!isGuest && typeof window.initCommercialAdmin === 'function') {
+    if (commercialSection) commercialSection.style.display = 'block';
+    if (typeof window.initCommercialAdmin === 'function') {
         window.initCommercialAdmin();
     }
 
-    // Hide/show Pool status header
     const poolHeader = document.getElementById('pool-status-header');
-    if (poolHeader) poolHeader.style.display = isGuest ? 'none' : 'block';
+    if (poolHeader) poolHeader.style.display = 'block';
 
-    // Hide/show Stop and Reset buttons
-    if (stopBtn) stopBtn.style.display = isGuest ? 'none' : 'inline-flex';
+    if (stopBtn) stopBtn.style.display = 'inline-flex';
     const resetBtn = document.getElementById('reset-stats-btn');
-    if (resetBtn) resetBtn.style.display = isGuest ? 'none' : 'inline-flex';
+    if (resetBtn) resetBtn.style.display = 'inline-flex';
 
-    // Make export stats button prominent for guest
     if (exportStatsBtn) {
-        exportStatsBtn.style.cssText = isGuest
-            ? 'color: #38bdf8; background: rgba(56,189,248,0.12); border: 1px solid rgba(56,189,248,0.35); border-radius: 8px; padding: 6px 14px; font-size: 13px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px; font-family: "Outfit", sans-serif;'
-            : 'color: var(--primary); display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; background: transparent; border: none; cursor: pointer;';
+        exportStatsBtn.style.cssText = 'color: var(--primary); display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; background: transparent; border: none; cursor: pointer;';
         exportStatsBtn.innerHTML = '<i class="fa-solid fa-file-arrow-down"></i> Tai Bao Cao';
     }
 
-    // Hide/show delete buttons on campaign tabs
     document.querySelectorAll('.tab-delete').forEach(btn => {
-        btn.style.display = isGuest ? 'none' : 'inline-flex';
+        btn.style.display = 'inline-flex';
     });
 
-    // Show badge for user role in header
     let userBadge = document.getElementById('header-user-badge');
     if (!userBadge) {
         userBadge = document.createElement('div');
@@ -522,17 +512,10 @@ function applyRoleUI(role, username) {
         }
     }
     if (userBadge) {
-        if (isGuest) {
-            userBadge.style.background = 'rgba(34, 211, 238, 0.12)';
-            userBadge.style.border = '1px solid rgba(34, 211, 238, 0.3)';
-            userBadge.style.color = '#22d3ee';
-            userBadge.innerHTML = `<i class="fa-solid fa-eye"></i> Khach xem: <strong>${username || '1'}</strong>`;
-        } else {
-            userBadge.style.background = 'rgba(99, 102, 241, 0.12)';
-            userBadge.style.border = '1px solid rgba(99, 102, 241, 0.3)';
-            userBadge.style.color = '#818cf8';
-            userBadge.innerHTML = `<i class="fa-solid fa-user-shield"></i> Quyen: <strong>ADMIN (${username || 'hien141'})</strong>`;
-        }
+        userBadge.style.background = 'rgba(99, 102, 241, 0.12)';
+        userBadge.style.border = '1px solid rgba(99, 102, 241, 0.3)';
+        userBadge.style.color = '#818cf8';
+        userBadge.innerHTML = `<i class="fa-solid fa-user-shield"></i> Quyen: <strong>ADMIN (${username || 'admin'})</strong>`;
     }
 }
 
@@ -549,7 +532,7 @@ function createTabButton(c) {
     tab.innerHTML = `
         <span class="tab-status-dot ${dotClass}"></span>
         <span>${displayName}</span>
-        <button type="button" class="tab-delete" data-campaign-id="${c.id}" title="Xoa chien dich" style="display: ${currentUserRole === 'guest' ? 'none' : 'inline-flex'};">
+        <button type="button" class="tab-delete" data-campaign-id="${c.id}" title="Xoa chien dich" style="display: inline-flex;">
             <i class="fa-solid fa-xmark"></i>
         </button>
     `;
@@ -864,13 +847,13 @@ exportStatsBtn.addEventListener('click', () => {
 // ─── Socket events ─────────────────────────────────────────────────────────────
 
 socket.on('user-info', (data) => {
-    if (data && data.role) {
+    if (data && data.role === 'admin') {
         applyRoleUI(data.role, data.username);
     }
 });
 
 fetch('/api/me').then(r => r.json()).then(d => {
-    if (d && d.success && d.role) {
+    if (d && d.success && d.role === 'admin') {
         applyRoleUI(d.role, d.username);
     }
 }).catch(() => {});
@@ -1096,7 +1079,8 @@ window.applySuggestedCooldown = function(sec) {
 
         tbody.innerHTML = filtered.map(o => {
             const prog = o.progress ? ` (${o.progress.successVisits || 0}/${o.progress.targetLimit || o.targetClicks})` : '';
-            const unpaid = o.paymentStatus !== 'paid';
+            const st = o.effectiveStatus || o.status;
+            const unpaidActive = o.paymentStatus !== 'paid' && st !== 'expired';
             const canDelete = !['running', 'waiting'].includes(o.effectiveStatus);
             return `<tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
                 <td style="padding: 10px 12px; font-family: monospace; font-weight: 700; color: #e2e8f0;">
@@ -1114,7 +1098,7 @@ window.applySuggestedCooldown = function(sec) {
                 <td style="padding: 10px 12px; text-align: right; font-family: monospace; font-weight: 700; color: #34d399;">${fmtVnd(o.totalAmount)}</td>
                 <td style="padding: 10px 12px;">${renderBadge(o)}</td>
                 <td style="padding: 10px 12px; text-align: right; white-space: nowrap;">
-                    ${unpaid ? `<button type="button" class="adm-confirm-ord" data-id="${esc(o.orderId)}" data-code="${esc(o.orderCode)}" style="padding: 4px 10px; font-size: 11px; font-weight: 700; border-radius: 6px; border: 0; background: #10b981; color: #fff; cursor: pointer; margin-right: 4px;">Duyet &amp; Chay</button>` : ''}
+                    ${unpaidActive ? `<button type="button" class="adm-confirm-ord" data-id="${esc(o.orderId)}" data-code="${esc(o.orderCode)}" style="padding: 4px 10px; font-size: 11px; font-weight: 700; border-radius: 6px; border: 0; background: #10b981; color: #fff; cursor: pointer; margin-right: 4px;">Duyet &amp; Chay</button>` : ''}
                     <a href="/track.html?order=${encodeURIComponent(o.orderId)}" target="_blank" style="display:inline-block;padding: 4px 8px; font-size: 11px; border-radius: 6px; border: 1px solid rgba(99,102,241,0.35); color: #a5b4fc; text-decoration: none; margin-right: 4px;">Xem</a>
                     ${canDelete ? `<button type="button" class="adm-del-ord" data-id="${esc(o.orderId)}" data-code="${esc(o.orderCode)}" style="padding: 4px 8px; font-size: 11px; border-radius: 6px; border: 1px solid rgba(239,68,68,0.3); background: rgba(239,68,68,0.1); color: #f87171; cursor: pointer;">Xoa</button>` : ''}
                 </td>

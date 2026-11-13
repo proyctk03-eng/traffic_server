@@ -102,21 +102,24 @@ function renderOrder(o) {
   $('barFill').style.width = pct + '%';
   $('progTxt').textContent = `${success.toLocaleString('vi-VN')} / ${target.toLocaleString('vi-VN')} click`;
 
-  const st = p.status || o.status;
+  const st = p.status || o.effectiveStatus || o.status;
+  const isExpired = st === 'expired' || (o.paymentStatus !== 'paid' && o.expiresAt && Date.now() >= Number(o.expiresAt));
   const badge = $('statusBadge');
   const payBtn = $('payBtn');
-  if (o.paymentStatus !== 'paid') {
+  if (isExpired || ['completed', 'expired', 'stopped'].includes(st)) {
+    badge.className = 'badge b-done';
+    badge.textContent = (isExpired || st === 'expired')
+      ? 'Hết hạn thanh toán'
+      : (st === 'completed' ? 'Hoàn thành' : 'Đã dừng');
+    payBtn.classList.add('hidden');
+    payBtn.style.display = 'none';
+    stopPolling();
+  } else if (o.paymentStatus !== 'paid') {
     badge.className = 'badge b-wait';
     badge.textContent = 'Chờ thanh toán';
     payBtn.classList.remove('hidden');
     payBtn.style.display = 'block';
     payBtn.href = '/order.html?order=' + encodeURIComponent(o.orderId);
-  } else if (['completed', 'expired', 'stopped'].includes(st)) {
-    badge.className = 'badge b-done';
-    badge.textContent = st === 'completed' ? 'Hoàn thành' : st === 'expired' ? 'Hết giờ' : 'Đã dừng';
-    payBtn.classList.add('hidden');
-    payBtn.style.display = 'none';
-    stopPolling();
   } else {
     badge.className = 'badge b-ok';
     badge.textContent = 'Đã thanh toán · Đang chạy';
