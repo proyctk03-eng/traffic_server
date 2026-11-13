@@ -348,7 +348,10 @@ describe('Cloudflare Integration, CORS/Bearer Auth & Static Demo Dual-Mode', () 
             await page.fill('#f-proxy', 'K_STATIC_SIM_KEY_01');
             await page.fill('#f-clicks', '3');
             await page.fill('#f-hours', '0.5');
-            await page.waitForFunction(() => document.getElementById('c-total')?.textContent?.includes('2.120'));
+            await page.waitForFunction(() =>
+                document.getElementById('c-total')?.textContent?.includes('2.120') &&
+                document.getElementById('dist-interval-pill')?.textContent?.includes('600s')
+            );
             await page.click('#submit-order-btn');
 
             await page.waitForSelector('#active-order-panel:not(.hidden)');
