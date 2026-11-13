@@ -331,7 +331,7 @@
             if (hooks.onStopQrCountdown) hooks.onStopQrCountdown();
         } else if (isExpired) {
             pill.className = 'pill warn';
-            pill.textContent = 'Hết hạn thanh toán (Quá 30 phút)';
+            pill.textContent = isPaid ? 'Hết giờ chạy' : 'Hết hạn thanh toán (Quá 30 phút)';
             if (hooks.onStopPolling) hooks.onStopPolling();
             if (hooks.onStopQrCountdown) hooks.onStopQrCountdown();
         } else if (effectiveStatus === 'stopped') {

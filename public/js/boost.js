@@ -553,7 +553,7 @@
             el.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
             if (left <= 0) {
                 stopQrCountdown();
-                if (!refreshedOnExpiry && state.activeOrder && state.activeOrder.paymentStatus !== 'paid' && S.getEffectiveOrderStatus(state.activeOrder) !== 'expired') {
+                if (!refreshedOnExpiry && state.activeOrder && state.activeOrder.paymentStatus !== 'paid') {
                     refreshedOnExpiry = true;
                     state.activeOrder.status = 'expired';
                     UI.renderActiveOrder(state.activeOrder, state, orderUiHooks);
