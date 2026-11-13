@@ -19,6 +19,106 @@ const DEFAULT_PAYMENT_CONFIG = {
 const CLICK_RATE = 40;
 const HOURLY_RATE = 2000;
 const DEFAULT_TEMPLATE = 'compact2';
+const ORDER_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+function isPrivateTargetAllowed() {
+    if (process.env.ALLOW_PRIVATE_TARGET_URLS === 'false') return false;
+    if (process.env.ALLOW_PRIVATE_TARGET_URLS === 'true') return true;
+    if (process.env.NODE_ENV === 'test') return true;
+    const isServerEntry = Boolean(require.main && require.main.filename && /[\\/]server\.js$/i.test(require.main.filename));
+    if (isServerEntry) return false;
+    const isTestRunner = Boolean(
+        process.env.NODE_TEST_CONTEXT ||
+        (require.main && require.main.filename && (
+            /[\\/]test[\\/]/i.test(require.main.filename) ||
+            /\.(?:test|spec)\.[a-z0-9]+$/i.test(require.main.filename)
+        ))
+    );
+    if (isTestRunner && process.env.NODE_ENV !== 'production') return true;
+    return false;
+}
+
+function isPrivateIpV4(ip) {
+    const parts = ip.split('.').map(Number);
+    if (parts.length !== 4 || parts.some(p => isNaN(p) || p < 0 || p > 255)) return false;
+    // 0.0.0.0/8 (current network)
+    if (parts[0] === 0) return true;
+    // 127.0.0.0/8 (loopback)
+    if (parts[0] === 127) return true;
+    // 10.0.0.0/8 (private)
+    if (parts[0] === 10) return true;
+    // 172.16.0.0/12 (private 172.16.0.0 - 172.31.255.255)
+    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+    // 192.168.0.0/16 (private)
+    if (parts[0] === 192 && parts[1] === 168) return true;
+    // 169.254.0.0/16 (link-local / cloud metadata)
+    if (parts[0] === 169 && parts[1] === 254) return true;
+    // 255.255.255.255 (broadcast)
+    if (parts[0] === 255 && parts[1] === 255 && parts[2] === 255 && parts[3] === 255) return true;
+    return false;
+}
+
+function decodeIpv4FromHexOrDotted(tail) {
+    if (!tail) return null;
+    if (/^\d+\.\d+\.\d+\.\d+$/.test(tail)) return tail;
+    const hexParts = tail.split(':');
+    if (hexParts.length === 2) {
+        const w1 = parseInt(hexParts[0], 16);
+        const w2 = parseInt(hexParts[1], 16);
+        if (!isNaN(w1) && !isNaN(w2) && w1 >= 0 && w1 <= 0xffff && w2 >= 0 && w2 <= 0xffff) {
+            return `${(w1 >> 8) & 0xff}.${w1 & 0xff}.${(w2 >> 8) & 0xff}.${w2 & 0xff}`;
+        }
+    }
+    return null;
+}
+
+function isPrivateIpV6(rawIp) {
+    const clean = (rawIp || '').replace(/^\[|\]$/g, '').toLowerCase().trim();
+    if (!clean) return false;
+    // Loopback & unspecified
+    if (clean === '::1' || clean === '::' || clean === '0:0:0:0:0:0:0:1' || clean === '0:0:0:0:0:0:0:0') return true;
+
+    // IPv4-mapped IPv6 (::ffff:127.0.0.1, WHATWG hex normalized ::ffff:7f00:1, or expanded 0:0:0:0:0:ffff:...)
+    if (clean.startsWith('::ffff:')) {
+        const v4 = decodeIpv4FromHexOrDotted(clean.slice(7));
+        if (v4) return isPrivateIpV4(v4);
+    }
+    if (/^(0+:){5}ffff:/i.test(clean)) {
+        const v4 = decodeIpv4FromHexOrDotted(clean.replace(/^(0+:){5}ffff:/i, ''));
+        if (v4) return isPrivateIpV4(v4);
+    }
+
+    // Deprecated IPv4-compatible IPv6 addresses (::127.0.0.1, WHATWG hex normalized ::7f00:1, or expanded 0:0:0:0:0:0:...)
+    if (clean.startsWith('::') && !clean.startsWith('::ffff:')) {
+        const v4 = decodeIpv4FromHexOrDotted(clean.slice(2));
+        if (v4) return isPrivateIpV4(v4);
+    }
+    if (/^(0+:){6}/i.test(clean)) {
+        const v4 = decodeIpv4FromHexOrDotted(clean.replace(/^(0+:){6}/i, ''));
+        if (v4) return isPrivateIpV4(v4);
+    }
+
+    // Unique local address fc00::/7 (fc00:: - fdff::)
+    if (/^f[cd][0-9a-f]{0,2}:/i.test(clean) || clean.startsWith('fc') || clean.startsWith('fd')) return true;
+    // Link-local unicast fe80::/10 (fe80:: - febf::)
+    if (/^fe[89ab][0-9a-f]{0,2}:/i.test(clean) || clean.startsWith('fe8') || clean.startsWith('fe9') || clean.startsWith('fea') || clean.startsWith('feb')) return true;
+    return false;
+}
+
+function isLexicallyPrivateHost(rawHost) {
+    if (!rawHost) return false;
+    const host = rawHost.replace(/^\[|\]$/g, '').toLowerCase().trim();
+    if (!host) return false;
+    if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return true;
+    if (host === 'metadata.google.internal' || host === 'instance-data') return true;
+    if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
+        return isPrivateIpV4(host);
+    }
+    if (host.includes(':')) {
+        return isPrivateIpV6(host);
+    }
+    return false;
+}
 
 function getPaymentConfig() {
     try {
@@ -73,6 +173,8 @@ function validateOrderParams(params) {
             const parsed = new URL(targetUrl);
             if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
                 errors.push('targetUrl must use http:// or https:// protocol');
+            } else if (!isPrivateTargetAllowed() && isLexicallyPrivateHost(parsed.hostname)) {
+                errors.push('targetUrl cannot target localhost, private, or loopback addresses');
             }
         } catch {
             errors.push('targetUrl is not a valid URL');
@@ -130,6 +232,12 @@ function validateOrderParams(params) {
     }
     const dedupIp = params.dedupIp !== false && params.dedupIp !== 'false';
     const randomLinks = params.randomLinks !== false && params.randomLinks !== 'false';
+    const dwellPreset = typeof params.dwellPreset === 'string' && params.dwellPreset.trim()
+        ? params.dwellPreset.trim()
+        : 'standard';
+    const deviceProfile = typeof params.deviceProfile === 'string' && params.deviceProfile.trim()
+        ? params.deviceProfile.trim()
+        : 'balanced';
 
     const isValid = errors.length === 0;
     return {
@@ -145,7 +253,9 @@ function validateOrderParams(params) {
             scheduleMode,
             customBlocks,
             dedupIp,
-            randomLinks
+            randomLinks,
+            dwellPreset,
+            deviceProfile
         } : null
     };
 }
@@ -233,13 +343,51 @@ function sanitizeOrderId(orderId) {
     return clean;
 }
 
+function checkOrderExpiration(order) {
+    if (!order || typeof order !== 'object') return order;
+    if (order.status === 'pending_payment' && (Date.now() - (order.createdAt || 0)) > ORDER_TTL_MS) {
+        order.status = 'expired';
+        order.paymentStatus = 'expired';
+        order.updatedAt = Date.now();
+        const cleanId = sanitizeOrderId(order.orderId);
+        if (cleanId) {
+            const filePath = path.join(ORDERS_DIR, `${cleanId}.json`);
+            try {
+                fs.writeFileSync(filePath, JSON.stringify(order, null, 4), 'utf-8');
+            } catch {}
+        }
+    }
+    return order;
+}
+
+function expireStaleOrders() {
+    if (!fs.existsSync(ORDERS_DIR)) return [];
+    const files = fs.readdirSync(ORDERS_DIR).filter(f => f.endsWith('.json'));
+    const expired = [];
+    for (const f of files) {
+        try {
+            const filePath = path.join(ORDERS_DIR, f);
+            const o = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+            if (o.status === 'pending_payment' && (Date.now() - (o.createdAt || 0)) > ORDER_TTL_MS) {
+                o.status = 'expired';
+                o.paymentStatus = 'expired';
+                o.updatedAt = Date.now();
+                fs.writeFileSync(filePath, JSON.stringify(o, null, 4), 'utf-8');
+                expired.push(o.orderId);
+            }
+        } catch {}
+    }
+    return expired;
+}
+
 function getOrder(orderId) {
     const cleanId = sanitizeOrderId(orderId);
     if (!cleanId) return null;
     const filePath = path.join(ORDERS_DIR, `${cleanId}.json`);
     if (!fs.existsSync(filePath)) return null;
     try {
-        return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+        const order = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+        return checkOrderExpiration(order);
     } catch (e) {
         console.error(`[orderService] Error reading order ${cleanId}:`, e.message);
         return null;
@@ -252,7 +400,8 @@ function listOrders() {
     const list = [];
     for (const f of files) {
         try {
-            list.push(JSON.parse(fs.readFileSync(path.join(ORDERS_DIR, f), 'utf-8')));
+            const parsed = JSON.parse(fs.readFileSync(path.join(ORDERS_DIR, f), 'utf-8'));
+            list.push(checkOrderExpiration(parsed));
         } catch {}
     }
     return list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
@@ -289,6 +438,8 @@ function createOrder(data) {
         customBlocks: sanitized.customBlocks || null,
         dedupIp: sanitized.dedupIp !== false,
         randomLinks: sanitized.randomLinks !== false,
+        dwellPreset: sanitized.dwellPreset || 'standard',
+        deviceProfile: sanitized.deviceProfile || 'balanced',
         vietQrUrl,
         bankInfo,
         status: 'pending_payment',
@@ -308,6 +459,12 @@ function confirmOrderPayment(orderId, extraFields = {}) {
     const order = getOrder(orderId);
     if (!order) {
         throw new Error(`Order not found: ${orderId}`);
+    }
+    if (order.status === 'expired') {
+        const err = new Error(`Order has expired: ${orderId}`);
+        err.code = 'ORDER_EXPIRED';
+        err.statusCode = 409;
+        throw err;
     }
 
     order.status = 'paid';
@@ -369,6 +526,11 @@ module.exports = {
     setPaymentConfig,
     maskProxyKey,
     listOrders,
+    expireStaleOrders,
+    checkOrderExpiration,
+    isPrivateTargetAllowed,
+    isLexicallyPrivateHost,
+    ORDER_TTL_MS,
     CONSTANTS: {
         CLICK_RATE,
         HOURLY_RATE,

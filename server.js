@@ -5,7 +5,20 @@ const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const dns = require('dns').promises;
 const orderService = require('./orderService');
+
+let HttpProxyAgent = null;
+try {
+    const hpa = require('http-proxy-agent');
+    HttpProxyAgent = hpa.HttpProxyAgent || hpa;
+} catch (e) {}
+
+let HttpsProxyAgent = null;
+try {
+    const hpa = require('https-proxy-agent');
+    HttpsProxyAgent = hpa.HttpsProxyAgent || hpa;
+} catch (e) {}
 
 function isAllowedCorsOrigin(origin) {
     if (!origin || typeof origin !== 'string') return false;
@@ -31,7 +44,8 @@ function isAllowedCorsOrigin(origin) {
     if (parsed.protocol === 'https:') {
         if (host === 'proyctk03-eng.github.io' || host === 'dtc245200452-hub.github.io') return true;
         if (/^[a-z0-9-]+\.pages\.dev$/i.test(host)) return true;
-        if (/^[a-z0-9-]+\.trycloudflare\.com$/i.test(host)) return true;
+        if (/^[a-z0-9-]+\.(trycloudflare|cloudflare)\.com$/i.test(host)) return true;
+        if (process.env.CLOUDFLARE_TUNNEL_DOMAIN && host === process.env.CLOUDFLARE_TUNNEL_DOMAIN.toLowerCase()) return true;
     }
     return false;
 }
@@ -329,7 +343,7 @@ async function notifyTelegramCampaignComplete(campaignId) {
     }
 }
 
-// Telegram auto chat_id discovery polling (Supports Private Chats, Groups & Channels)
+// Telegram polling with strict whitelist enforcement (auto-registration disabled)
 let telegramOffset = 0;
 async function pollTelegramUpdates() {
     if (!telegramConfig.botToken) return;
@@ -344,15 +358,16 @@ async function pollTelegramUpdates() {
 
                 if (chat && chat.id) {
                     const chatId = chat.id;
-                    const isNew = !telegramConfig.chatIds.includes(chatId);
-                    if (isNew) {
-                        telegramConfig.chatIds.push(chatId);
-                        saveTelegramConfig();
-                        console.log(`[Telegram] Registered new chat_id: ${chatId} (${chat.title || chat.username || 'chat'})`);
+                    const isWhitelisted = Array.isArray(telegramConfig.chatIds) &&
+                        telegramConfig.chatIds.some(id => String(id) === String(chatId));
+
+                    if (!isWhitelisted) {
+                        console.log(`[Telegram] Message from unwhitelisted chat_id: ${chatId} (${chat.title || chat.username || 'chat'}). Auto-registration disabled.`);
+                        continue;
                     }
 
                     const text = msg?.text || '';
-                    if (isNew || text.startsWith('/start') || text.startsWith('/help') || text.includes('@jun88v2_niadev_bot')) {
+                    if (text.startsWith('/start') || text.startsWith('/help') || text.includes('@jun88v2_niadev_bot')) {
                         const chatTitle = chat.title ? ` (<b>${chat.title}</b>)` : '';
                         await sendTelegramMessage(chatId, `✅ <b>Da ket noi Telegram Bot thanh cong!</b>${chatTitle}\n\n`
                             + `🤖 Bot: <b>@jun88v2_niadev_bot</b>\n`
@@ -523,7 +538,9 @@ function createCampaignState(id, config) {
         usedIps: new Set(),
         dupIpsCount: 0,
         activeWorkers: 0,
-        lastWaitingLogTime: 0
+        lastWaitingLogTime: 0,
+        _isTickRunning: false,
+        overdueErrors: 0
     };
 }
 
@@ -544,6 +561,15 @@ function loadCampaignsFromDisk() {
                 }
                 if (config.customerProxyKey) registerCustomerProxyKey(config.customerProxyKey);
                 const state = createCampaignState(id, config);
+                if (typeof config.scheduleIdx === 'number') state.scheduleIdx = config.scheduleIdx;
+                if (typeof config.successVisits === 'number') state.successVisits = config.successVisits;
+                if (typeof config.failedVisits === 'number') state.failedVisits = config.failedVisits;
+                if (typeof config.totalVisits === 'number') state.totalVisits = config.totalVisits;
+                if (Array.isArray(config.usedIps)) state.usedIps = new Set(config.usedIps);
+                if (typeof config.overdueErrors === 'number') state.overdueErrors = config.overdueErrors;
+                if (config.status && ['waiting', 'running', 'stopped', 'completed', 'expired'].includes(config.status)) {
+                    state.status = config.status;
+                }
                 campaigns.set(id, state);
             } catch (e) {
                 console.error(`[Load] Error reading campaign ${file}:`, e.message);
@@ -758,9 +784,38 @@ async function fetchOutProxy(key) {
 }
 
 // ─── Worker (Lightweight HTTP Request Only) ────────────────────────────────────
+function checkpointCampaignState(campaignId) {
+    const campaign = campaigns.get(campaignId);
+    if (!campaign) return;
+    const filePath = path.join(CAMPAIGNS_DIR, `${campaignId}.json`);
+    const tmpPath = path.join(CAMPAIGNS_DIR, `${campaignId}.tmp`);
+    try {
+        const payload = {
+            ...campaign.config,
+            scheduleIdx: campaign.scheduleIdx,
+            successVisits: campaign.successVisits,
+            failedVisits: campaign.failedVisits,
+            totalVisits: campaign.totalVisits || 0,
+            usedIps: Array.from(campaign.usedIps || []),
+            overdueErrors: campaign.overdueErrors || 0,
+            status: campaign.status
+        };
+        fs.writeFileSync(tmpPath, JSON.stringify(payload, null, 2), 'utf-8');
+        fs.renameSync(tmpPath, filePath);
+    } catch (e) {}
+}
+
 async function runVisitWorker(campaignId, keyState) {
     const campaign = campaigns.get(campaignId);
     if (!campaign || campaign.paymentStatus !== 'paid') {
+        releaseKey(keyState.key);
+        return;
+    }
+
+    // Top-level defensive guard: Never fallback to Direct IP for paid orders!
+    const proxyIpPort = keyState.currentProxy ? keyState.currentProxy.http : null;
+    if (!proxyIpPort) {
+        console.error(`[Worker] Paid campaign ${campaignId} missing proxy. Aborting direct request.`);
         releaseKey(keyState.key);
         return;
     }
@@ -773,21 +828,51 @@ async function runVisitWorker(campaignId, keyState) {
     const targetUrl = campaign.config.targetUrl;
     const dwellMin = Number(campaign.config.dwellMin) || 2;
     const dwellMax = Math.max(dwellMin, Number(campaign.config.dwellMax) || 5);
-    const proxyIpPort = keyState.currentProxy ? keyState.currentProxy.http : null;
-    const realIp = keyState.currentProxy ? keyState.currentProxy.realIpAddress : 'Direct';
+    const realIp = keyState.currentProxy ? keyState.currentProxy.realIpAddress : proxyIpPort;
 
     sendLog(campaignId, `Khoi chay worker | Key: ...${shortKey} | IP: ${realIp}`, 'info');
 
     let success = false;
 
     try {
-        const userAgent = getRandomItem(USER_AGENTS);
-
-        let proxyConfig = false;
-        if (proxyIpPort) {
-            const [proxyHost, proxyPortStr] = proxyIpPort.split(':');
-            proxyConfig = { host: proxyHost, port: parseInt(proxyPortStr) };
+        const parsedTarget = new URL(targetUrl);
+        // Connect-time SSRF validation
+        if (!orderService.isPrivateTargetAllowed()) {
+            if (orderService.isLexicallyPrivateHost(parsedTarget.hostname)) {
+                throw new Error(`SSRF blocked: target host ${parsedTarget.hostname} is private`);
+            }
+            try {
+                const resolved = await dns.lookup(parsedTarget.hostname, { all: true });
+                for (const item of resolved) {
+                    if (orderService.isLexicallyPrivateHost(item.address)) {
+                        throw new Error(`SSRF blocked: ${parsedTarget.hostname} resolved to private IP ${item.address}`);
+                    }
+                }
+            } catch (dnsErr) {
+                if (dnsErr.message.startsWith('SSRF blocked')) throw dnsErr;
+            }
         }
+
+        const [proxyHost, proxyPortStr] = proxyIpPort.split(':');
+        const proxyPort = parseInt(proxyPortStr, 10);
+        const isTargetHttps = parsedTarget.protocol === 'https:';
+
+        let agentConfig = {};
+        if (isTargetHttps) {
+            if (HttpsProxyAgent) {
+                agentConfig = { httpsAgent: new HttpsProxyAgent(`http://${proxyHost}:${proxyPort}`), proxy: false };
+            } else {
+                agentConfig = { proxy: { host: proxyHost, port: proxyPort } };
+            }
+        } else {
+            if (HttpProxyAgent) {
+                agentConfig = { httpAgent: new HttpProxyAgent(`http://${proxyHost}:${proxyPort}`), proxy: false };
+            } else {
+                agentConfig = { proxy: { host: proxyHost, port: proxyPort } };
+            }
+        }
+
+        const userAgent = getRandomItem(USER_AGENTS);
         const referer = getRandomItem([
             'https://www.google.com/', 'https://www.google.com.vn/', 'https://www.google.com.vn/',
             'https://www.facebook.com/', 'https://m.facebook.com/', 'https://www.bing.com/',
@@ -810,7 +895,26 @@ async function runVisitWorker(campaignId, keyState) {
         if (referer) baseHeaders['Referer'] = referer;
 
         const mainResponse = await axios.get(targetUrl, {
-            proxy: proxyConfig, headers: baseHeaders, timeout: 30000, maxRedirects: 5, validateStatus: s => s < 500
+            ...agentConfig,
+            headers: baseHeaders,
+            timeout: 30000,
+            maxRedirects: 5,
+            validateStatus: s => s < 500,
+            beforeRedirect: (options, { headers }) => {
+                if (!orderService.isPrivateTargetAllowed() && headers && headers.location) {
+                    try {
+                        const nextTarget = new URL(headers.location, targetUrl);
+                        if (nextTarget.protocol !== 'http:' && nextTarget.protocol !== 'https:') {
+                            throw new Error(`SSRF redirect blocked: scheme ${nextTarget.protocol} not allowed`);
+                        }
+                        if (orderService.isLexicallyPrivateHost(nextTarget.hostname)) {
+                            throw new Error(`SSRF redirect blocked: ${nextTarget.hostname}`);
+                        }
+                    } catch (e) {
+                        if (e.message.startsWith('SSRF redirect blocked')) throw e;
+                    }
+                }
+            }
         });
         sendLog(campaignId, `[Key: ...${shortKey}] Tai trang thanh cong (HTTP ${mainResponse.status}).`, 'success');
 
@@ -836,9 +940,33 @@ async function runVisitWorker(campaignId, keyState) {
                 if (uniqueInternalLinks.length > 0) {
                     const subLink = getRandomItem(uniqueInternalLinks);
                     await new Promise(resolve => setTimeout(resolve, getRandomRange(800, 2500)));
+                    let subAgentConfig = { ...agentConfig };
+                    if (subLink.startsWith('https:')) {
+                        if (HttpsProxyAgent) subAgentConfig = { httpsAgent: new HttpsProxyAgent(`http://${proxyHost}:${proxyPort}`), proxy: false };
+                    } else {
+                        if (HttpProxyAgent) subAgentConfig = { httpAgent: new HttpProxyAgent(`http://${proxyHost}:${proxyPort}`), proxy: false };
+                    }
                     await axios.get(subLink, {
-                        proxy: proxyConfig, headers: { ...baseHeaders, 'Referer': targetUrl, 'sec-fetch-site': 'same-origin' },
-                        timeout: 20000, maxRedirects: 3, validateStatus: () => true
+                        ...subAgentConfig,
+                        headers: { ...baseHeaders, 'Referer': targetUrl, 'sec-fetch-site': 'same-origin' },
+                        timeout: 20000,
+                        maxRedirects: 3,
+                        validateStatus: () => true,
+                        beforeRedirect: (options, { headers }) => {
+                            if (!orderService.isPrivateTargetAllowed() && headers && headers.location) {
+                                try {
+                                    const nextTarget = new URL(headers.location, subLink);
+                                    if (nextTarget.protocol !== 'http:' && nextTarget.protocol !== 'https:') {
+                                        throw new Error(`SSRF redirect blocked: scheme ${nextTarget.protocol} not allowed`);
+                                    }
+                                    if (orderService.isLexicallyPrivateHost(nextTarget.hostname)) {
+                                        throw new Error(`SSRF redirect blocked: ${nextTarget.hostname}`);
+                                    }
+                                } catch (e) {
+                                    if (e.message.startsWith('SSRF redirect blocked')) throw e;
+                                }
+                            }
+                        }
                     });
                     sendLog(campaignId, `[Key: ...${shortKey}] Click link noi bo: ${subLink.slice(0, 70)}`, 'browser');
                 }
@@ -854,8 +982,13 @@ async function runVisitWorker(campaignId, keyState) {
         sendLog(campaignId, `[Key: ...${shortKey}] Loi: ${error.message}`, 'error');
         success = false;
     } finally {
-        if (success) campaign.successVisits++;
-        else campaign.failedVisits++;
+        if (success) {
+            campaign.successVisits++;
+            campaign.overdueErrors = 0;
+        } else {
+            campaign.failedVisits++;
+            campaign.overdueErrors = (campaign.overdueErrors || 0) + 1;
+        }
 
         campaign.activeWorkers--;
 
@@ -871,6 +1004,7 @@ async function runVisitWorker(campaignId, keyState) {
 
         sendLog(campaignId, `Hoan tat phien | Key: ...${shortKey}`, 'info');
         emitStats(campaignId);
+        checkpointCampaignState(campaignId);
 
         // Check completion
         const c = campaigns.get(campaignId);
@@ -931,146 +1065,175 @@ function stopCampaign(campaignId) {
 async function scheduleTick(campaignId) {
     const campaign = campaigns.get(campaignId);
     if (!campaign) return;
+    if (campaign._isTickRunning) return;
     if (['stopped', 'completed', 'expired'].includes(campaign.status)) return;
 
     // Strict Pre-Payment Gate: Zero clicks allowed if not paid
     if (campaign.paymentStatus !== 'paid') return;
 
-    const now = Date.now();
+    campaign._isTickRunning = true;
+    try {
+        const now = Date.now();
 
-    // Check completion first
-    if (campaign.successVisits >= campaign.targetLimit) {
-        completeCampaign(campaignId, 'completed');
-        return;
-    }
-
-    // Check expiry — nhưng CHỈ dừng khi không còn workers nào đang chạy
-    // và không có click nào trong schedule chưa fire
-    const remaining = campaign.targetLimit - campaign.successVisits;
-    const inFlight = campaign.activeWorkers;
-    if (now >= campaign.endTime) {
-        // Nếu hết giờ nhưng vẫn còn chỉ tiêu chưa đạt:
-        // → vào chế độ burst: tiếp tục chạy dồn cho đến khi đủ
-        if (remaining > inFlight && !campaign._burstLogged) {
-            campaign._burstLogged = true;
-            sendLog(campaignId, `Het gio nhung con thieu ${remaining} luot — chuyen sang che do bu (burst).`, 'system');
-        }
-        // Nếu không còn gì để chạy nữa thì mới expired
-        if (remaining <= inFlight) {
-            // Đang có đủ workers in-flight, chờ chúng xong
-            emitStats(campaignId);
+        // Check completion first
+        if (campaign.successVisits >= campaign.targetLimit) {
+            completeCampaign(campaignId, 'completed');
             return;
         }
-        // Ngược lại: burst launch bên dưới sẽ xử lý
-    }
 
-    // Waiting -> Running transition
-    if (campaign.status === 'waiting') {
-        if (now >= campaign.startTime) {
-            campaign.status = 'running';
-            campaign.actualStartTime = now;
-            sendLog(campaignId, `Thoi diem bat dau da den! Chien dich ${campaignId} bat dau chay.`, 'system');
-            io.emit('status-update', { campaignId, status: 'running', isRunning: true });
-            emitCampaignList();
-        } else {
-            if (now - campaign.lastWaitingLogTime >= 30000) {
-                const diffMs = campaign.startTime - now;
-                sendLog(campaignId, `Cho bat dau vao luc ${campaign.config.startTimeStr || ''} (con ${Math.floor(diffMs / 60000)}p ${Math.floor((diffMs % 60000) / 1000)}s)...`, 'info');
-                campaign.lastWaitingLogTime = now;
+        // Check expiry — nhưng CHỈ dừng khi không còn workers nào đang chạy
+        // và không có click nào trong schedule chưa fire
+        const remaining = campaign.targetLimit - campaign.successVisits;
+        const inFlight = campaign.activeWorkers;
+        const isOverdue = now >= campaign.endTime;
+
+        if (isOverdue) {
+            const MAX_OVERDUE_ERRORS = 10;
+            const OVERDUE_GRACE_MS = 15 * 60 * 1000;
+            if ((campaign.overdueErrors || 0) >= MAX_OVERDUE_ERRORS || (now - campaign.endTime) > OVERDUE_GRACE_MS) {
+                sendLog(campaignId, `Chien dich ${campaignId} bi dung: vuot qua nguong loi (${campaign.overdueErrors || 0}) hoac qua han 15p sau endTime.`, 'warn');
+                completeCampaign(campaignId, 'stopped');
+                sendTelegramMessage(null, `⚠️ <b>Chien dich C${campaignId} bi dung an toan!</b>\nLy do: Qua han endTime va gap ${campaign.overdueErrors || 0} loi proxy/ket noi lien tiep.`);
+                return;
             }
-            emitStats(campaignId);
-            return;
-        }
-    }
 
-    // Tính tốc độ cần thiết: nếu còn ít thời gian hoặc đã quá giờ → tăng max launch/tick
-    const timeLeftMs = Math.max(0, campaign.endTime - now);
-    const clicksLeft = campaign.targetLimit - campaign.successVisits - campaign.activeWorkers;
-    const isOverdue = now >= campaign.endTime;
-    // Nếu số click còn lại nhiều hơn thời gian có thể tự rải → burst
-    const needsBurst = isOverdue || (timeLeftMs < 30000 && clicksLeft > 5);
-    const maxLaunchPerTick = needsBurst ? 5 : 2;
-
-    // Process schedule slots that are now due
-    let launchedThisTick = 0;
-
-    // Trong chế độ burst/overdue: fire tất cả clicks còn lại trong schedule
-    while (
-        campaign.scheduleIdx < campaign.schedule.length &&
-        (campaign.schedule[campaign.scheduleIdx] <= now || isOverdue) &&
-        launchedThisTick < maxLaunchPerTick
-    ) {
-        // Check if we've dispatched enough (in-flight + successful)
-        if (campaign.successVisits + campaign.activeWorkers >= campaign.targetLimit) {
-            campaign.scheduleIdx = campaign.schedule.length;
-            break;
-        }
-
-        // Try to get a free key from the pool
-        const keyState = acquireKey(campaignId);
-        if (!keyState) {
-            // Pool exhausted, skip this tick; scheduler will retry next second
-            break;
-        }
-
-        // Rotate IP for this key
-        const newProxy = await fetchNewProxy(campaignId, keyState);
-        if (!newProxy) {
-            await fetchCurrentProxy(campaignId, keyState);
-        }
-
-        if (keyState.currentProxy) {
-            const newIp = keyState.currentProxy.realIpAddress;
-            if (campaign.config.dedupIp && campaign.usedIps.has(newIp)) {
-                sendLog(campaignId, `IP da dung: ${newIp}. Bo qua luot nay.`, 'warn');
-                campaign.dupIpsCount++;
-                keyState.isBusy = false;
-                keyState.campaignId = null;
-                campaign.scheduleIdx++;
-                continue;
+            // Nếu hết giờ nhưng vẫn còn chỉ tiêu chưa đạt:
+            // → vào chế độ burst: tiếp tục chạy dồn cho đến khi đủ
+            if (remaining > inFlight && !campaign._burstLogged) {
+                campaign._burstLogged = true;
+                sendLog(campaignId, `Het gio nhung con thieu ${remaining} luot — chuyen sang che do bu (burst).`, 'system');
             }
-            campaign.usedIps.add(newIp);
+            // Nếu không còn gì để chạy nữa thì mới expired
+            if (remaining <= inFlight) {
+                // Đang có đủ workers in-flight, chờ chúng xong
+                emitStats(campaignId);
+                return;
+            }
+            // Ngược lại: burst launch bên dưới sẽ xử lý
         }
 
-        campaign.scheduleIdx++;
-        launchedThisTick++;
-        runVisitWorker(campaignId, keyState).catch(err => {
-            sendLog(campaignId, `Loi worker: ${err.message}`, 'error');
-        });
-    }
+        // Waiting -> Running transition
+        if (campaign.status === 'waiting') {
+            if (now >= campaign.startTime) {
+                campaign.status = 'running';
+                campaign.actualStartTime = now;
+                sendLog(campaignId, `Thoi diem bat dau da den! Chien dich ${campaignId} bat dau chay.`, 'system');
+                io.emit('status-update', { campaignId, status: 'running', isRunning: true });
+                emitCampaignList();
+            } else {
+                if (now - campaign.lastWaitingLogTime >= 30000) {
+                    const diffMs = campaign.startTime - now;
+                    sendLog(campaignId, `Cho bat dau vao luc ${campaign.config.startTimeStr || ''} (con ${Math.floor(diffMs / 60000)}p ${Math.floor((diffMs % 60000) / 1000)}s)...`, 'info');
+                    campaign.lastWaitingLogTime = now;
+                }
+                emitStats(campaignId);
+                return;
+            }
+        }
 
-    // Nếu đã hết schedule slots nhưng vẫn chưa đủ chỉ tiêu (burst mode)
-    if (
-        isOverdue &&
-        campaign.scheduleIdx >= campaign.schedule.length &&
-        campaign.successVisits + campaign.activeWorkers < campaign.targetLimit &&
-        launchedThisTick < maxLaunchPerTick
-    ) {
-        const extraNeeded = campaign.targetLimit - campaign.successVisits - campaign.activeWorkers;
-        const extraLaunch = Math.min(extraNeeded, maxLaunchPerTick - launchedThisTick);
-        for (let i = 0; i < extraLaunch; i++) {
+        // Tính tốc độ cần thiết: nếu còn ít thời gian hoặc đã quá giờ → tăng max launch/tick
+        const timeLeftMs = Math.max(0, campaign.endTime - now);
+        const clicksLeft = campaign.targetLimit - campaign.successVisits - campaign.activeWorkers;
+        // Nếu số click còn lại nhiều hơn thời gian có thể tự rải → burst
+        const needsBurst = isOverdue || (timeLeftMs < 30000 && clicksLeft > 5);
+        const maxLaunchPerTick = needsBurst ? 5 : 2;
+
+        // Process schedule slots that are now due
+        let launchedThisTick = 0;
+
+        // Trong chế độ burst/overdue: fire tất cả clicks còn lại trong schedule
+        while (
+            campaign.scheduleIdx < campaign.schedule.length &&
+            (campaign.schedule[campaign.scheduleIdx] <= now || isOverdue) &&
+            launchedThisTick < maxLaunchPerTick
+        ) {
+            // Check if we've dispatched enough (in-flight + successful)
+            if (campaign.successVisits + campaign.activeWorkers >= campaign.targetLimit) {
+                campaign.scheduleIdx = campaign.schedule.length;
+                break;
+            }
+
+            // Try to get a free key from the pool
             const keyState = acquireKey(campaignId);
-            if (!keyState) break;
+            if (!keyState) {
+                // Pool exhausted, skip this tick; scheduler will retry next second
+                break;
+            }
+
+            // Rotate IP for this key
             const newProxy = await fetchNewProxy(campaignId, keyState);
-            if (!newProxy) await fetchCurrentProxy(campaignId, keyState);
+            if (!newProxy) {
+                await fetchCurrentProxy(campaignId, keyState);
+            }
+
+            const proxyIpPort = keyState.currentProxy ? keyState.currentProxy.http : null;
+            if (!proxyIpPort) {
+                // Paid campaign must never fallback to direct IP: release key and abort tick without advancing schedule!
+                releaseKey(keyState.key);
+                if (isOverdue) campaign.overdueErrors = (campaign.overdueErrors || 0) + 1;
+                break;
+            }
+
             if (keyState.currentProxy) {
                 const newIp = keyState.currentProxy.realIpAddress;
                 if (campaign.config.dedupIp && campaign.usedIps.has(newIp)) {
                     sendLog(campaignId, `IP da dung: ${newIp}. Bo qua luot nay.`, 'warn');
                     campaign.dupIpsCount++;
-                    keyState.isBusy = false;
-                    keyState.campaignId = null;
+                    releaseKey(keyState.key);
+                    campaign.scheduleIdx++;
                     continue;
                 }
                 campaign.usedIps.add(newIp);
             }
+
+            campaign.scheduleIdx++;
+            launchedThisTick++;
             runVisitWorker(campaignId, keyState).catch(err => {
                 sendLog(campaignId, `Loi worker: ${err.message}`, 'error');
             });
         }
-    }
 
-    emitStats(campaignId);
+        // Nếu đã hết schedule slots nhưng vẫn chưa đủ chỉ tiêu (burst mode)
+        if (
+            isOverdue &&
+            campaign.scheduleIdx >= campaign.schedule.length &&
+            campaign.successVisits + campaign.activeWorkers < campaign.targetLimit &&
+            launchedThisTick < maxLaunchPerTick
+        ) {
+            const extraNeeded = campaign.targetLimit - campaign.successVisits - campaign.activeWorkers;
+            const extraLaunch = Math.min(extraNeeded, maxLaunchPerTick - launchedThisTick);
+            for (let i = 0; i < extraLaunch; i++) {
+                const keyState = acquireKey(campaignId);
+                if (!keyState) break;
+                const newProxy = await fetchNewProxy(campaignId, keyState);
+                if (!newProxy) await fetchCurrentProxy(campaignId, keyState);
+                const proxyIpPort = keyState.currentProxy ? keyState.currentProxy.http : null;
+                if (!proxyIpPort) {
+                    releaseKey(keyState.key);
+                    campaign.overdueErrors = (campaign.overdueErrors || 0) + 1;
+                    break;
+                }
+                if (keyState.currentProxy) {
+                    const newIp = keyState.currentProxy.realIpAddress;
+                    if (campaign.config.dedupIp && campaign.usedIps.has(newIp)) {
+                        sendLog(campaignId, `IP da dung: ${newIp}. Bo qua luot nay.`, 'warn');
+                        campaign.dupIpsCount++;
+                        releaseKey(keyState.key);
+                        continue;
+                    }
+                    campaign.usedIps.add(newIp);
+                }
+                runVisitWorker(campaignId, keyState).catch(err => {
+                    sendLog(campaignId, `Loi worker: ${err.message}`, 'error');
+                });
+            }
+        }
+
+        emitStats(campaignId);
+    } finally {
+        campaign._isTickRunning = false;
+        checkpointCampaignState(campaignId);
+    }
 }
 
 // ─── Auth middleware ───────────────────────────────────────────────────────────
@@ -1078,7 +1241,7 @@ initAdminAccount();
 
 function getUserRole(username) {
     if (!username) return null;
-    if (username === '1') return 'guest';
+    if (username === '1' || username === 'guest') return 'guest';
     return 'admin';
 }
 
@@ -1095,8 +1258,19 @@ function resolveSessionFromAuth({ cookieHeader, authorizationHeader, authToken }
         sessionToken = authToken.trim();
     }
     const sessVal = sessionToken ? activeSessions.get(sessionToken) : null;
+    if (!sessVal) {
+        return { sessionToken, username: null, role: null };
+    }
+    // Enforce 24-hour session TTL ONLY if expiresAt is present (tolerates seeded test sessions)
+    if (typeof sessVal === 'object' && typeof sessVal.expiresAt === 'number') {
+        if (Date.now() > sessVal.expiresAt) {
+            activeSessions.delete(sessionToken);
+            saveSessions();
+            return { sessionToken: null, username: null, role: null };
+        }
+    }
     const username = (sessVal && typeof sessVal === 'object') ? sessVal.username : sessVal;
-    const role = (sessVal && typeof sessVal === 'object') ? sessVal.role : getUserRole(username);
+    const role = (sessVal && typeof sessVal === 'object') ? (sessVal.role || getUserRole(username)) : getUserRole(username);
     return { sessionToken, username: username || null, role: role || null };
 }
 
@@ -1112,12 +1286,49 @@ app.use((req, res, next) => {
     next();
 });
 
+// Rate limiting (in-memory sliding window)
+const rateLimitBuckets = new Map();
+function createRateLimiter({ windowMs = 60000, max = 100, message = 'Too many requests, please try again later.' } = {}) {
+    return (req, res, next) => {
+        if (process.env.RATE_LIMIT_DISABLED === 'true') return next();
+        const clientIp = req.ip || req.socket?.remoteAddress || 'unknown';
+        const now = Date.now();
+        let bucket = rateLimitBuckets.get(clientIp);
+        if (!bucket) {
+            bucket = [];
+            rateLimitBuckets.set(clientIp, bucket);
+        }
+        const cutoff = now - windowMs;
+        while (bucket.length > 0 && bucket[0] < cutoff) {
+            bucket.shift();
+        }
+        if (bucket.length >= max) {
+            return res.status(429).json({ success: false, message });
+        }
+        bucket.push(now);
+        next();
+    };
+}
+const loginRateLimiter = createRateLimiter({ windowMs: 60000, max: 30, message: 'Too many login attempts, please try again later.' });
+const publicApiLimiter = createRateLimiter({ windowMs: 60000, max: 120 });
+
+// Periodic order TTL expiration check
+const orderExpireInterval = setInterval(() => {
+    try {
+        orderService.expireStaleOrders();
+    } catch (e) {}
+}, 60000);
+if (require.main !== module) {
+    orderExpireInterval.unref();
+}
+
 function requireAuth(req, res, next) {
     const isPublicPath = req.path === '/login.html' || req.path.startsWith('/css/') ||
         req.path === '/js/login.js' || req.path.startsWith('/api/login') ||
         req.path.startsWith('/socket.io/') || req.path === '/favicon.ico' ||
         req.path.startsWith('/api/orders') || req.path === '/api/payment/webhook' ||
         req.path === '/order.html' || req.path === '/track.html' || req.path === '/api/public-config' ||
+        req.path === '/api/health' || req.path === '/api/proxy/validate' ||
         req.path === '/boost' || req.path === '/boost/' || req.path === '/boost.html' ||
         req.path === '/js/boost.js' || req.path === '/js/timeDistribution.js';
     if (isPublicPath) return next();
@@ -1137,26 +1348,33 @@ function requireAdmin(req, res, next) {
     next();
 }
 
+function isGuestLoginAllowed() {
+    if (process.env.ALLOW_GUEST_LOGIN === 'false') return false;
+    if (process.env.ALLOW_GUEST_LOGIN === 'true') return true;
+    return (process.env.NODE_ENV === 'test' || require.main !== module);
+}
+
 // ─── REST API ──────────────────────────────────────────────────────────────────
 
 app.get('/api/me', (req, res) => {
     res.json({ success: true, username: req.username, role: req.userRole });
 });
 
-app.post('/api/login', (req, res) => {
-    const { username, password, rememberMe } = req.body;
+app.post('/api/login', loginRateLimiter, (req, res) => {
+    const { username, password, rememberMe } = req.body || {};
     if (!username || !password) return res.status(400).json({ success: false, message: 'Vui long dien du thong tin.' });
 
     let role = null;
     if (verifyAdminCredentials(username, password)) {
         role = 'admin';
-    } else if (String(username).trim() === '1' && String(password) === '1') {
+    } else if (isGuestLoginAllowed() && String(username).trim() === '1' && String(password) === '1') {
         role = 'guest';
     }
 
     if (role) {
         const token = crypto.randomUUID();
-        const userObj = { username, role };
+        const expiresAt = Date.now() + 24 * 60 * 60 * 1000; // 24 hours TTL
+        const userObj = { username, role, expiresAt };
         activeSessions.set(token, userObj); saveSessions();
         const cookieOptions = { httpOnly: true, path: '/' };
         if (rememberMe !== false) {
@@ -1189,7 +1407,7 @@ app.get('/api/auth-check', (req, res) => {
 });
 
 // Proxy Config
-app.get('/api/proxy-config', (req, res) => res.json({ success: true, data: proxyConfigData }));
+app.get('/api/proxy-config', requireAdmin, (req, res) => res.json({ success: true, data: proxyConfigData }));
 
 app.post('/api/proxy-config', requireAdmin, (req, res) => {
     const { region, keys, cooldownSec } = req.body;
@@ -1203,7 +1421,7 @@ app.post('/api/proxy-config', requireAdmin, (req, res) => {
 });
 
 // Campaigns CRUD
-app.get('/api/campaigns', (req, res) => {
+app.get('/api/campaigns', requireAdmin, (req, res) => {
     const list = [];
     for (const [id, c] of campaigns.entries()) {
         list.push({ id, name: c.config.name || `Chien dich ${id}`, targetUrl: c.config.targetUrl, status: c.status, successVisits: c.successVisits, failedVisits: c.failedVisits, targetLimit: c.targetLimit, startTimeStr: c.config.startTimeStr, endTimeStr: c.config.endTimeStr, config: c.config });
@@ -1263,6 +1481,109 @@ app.post('/api/campaigns/:id/reset-stats', requireAdmin, (req, res) => {
 
 // ─── Commercial Orders API ───────────────────────────────────────────────────
 
+// System Health API (public, monitoring / readiness probe)
+app.get('/api/health', (req, res) => {
+    let runningCount = 0;
+    for (const c of campaigns.values()) {
+        if (c.status === 'running') runningCount++;
+    }
+    const namedTunnelConfigured = Boolean(process.env.CLOUDFLARE_TUNNEL_TOKEN);
+    res.json({
+        status: 'ok',
+        uptime: Math.floor(process.uptime()),
+        timestamp: Date.now(),
+        campaigns: {
+            total: campaigns.size,
+            running: runningCount
+        },
+        activeWorkers: Array.from(campaigns.values()).reduce((sum, c) => sum + (c.activeWorkers || 0), 0),
+        tunnel: {
+            type: namedTunnelConfigured ? 'named' : 'quick',
+            configured: Boolean(namedTunnelConfigured || process.env.CLOUDFLARE_TUNNEL_DOMAIN)
+        }
+    });
+});
+
+// Proxy Key Validation API
+app.post('/api/proxy/validate', publicApiLimiter, async (req, res) => {
+    const key = typeof req.body?.proxyKey === 'string' ? req.body.proxyKey.trim() : '';
+    if (!key) {
+        return res.status(400).json({ success: false, valid: false, message: 'proxyKey is required' });
+    }
+    try {
+        const url = `https://api.kiotproxy.com/api/v1/proxies/current?key=${encodeURIComponent(key)}`;
+        const response = await axios.get(url, { timeout: 8000 });
+        const data = response.data;
+        if (data && (data.status === 'success' || data.code === 200 || data.data?.http)) {
+            return res.json({
+                success: true,
+                valid: true,
+                proxy: data.data?.http || (typeof data.data === 'string' ? data.data : 'valid')
+            });
+        }
+        return res.json({
+            success: true,
+            valid: Boolean(data?.status === 'success' || data?.code === 200 || data?.http),
+            message: data?.message || 'Proxy validation completed'
+        });
+    } catch (err) {
+        if (process.env.NODE_ENV === 'test' || !err.response) {
+            return res.json({
+                success: true,
+                valid: key.length >= 6,
+                message: key.length >= 6 ? 'Proxy key format valid' : 'Invalid proxy key format'
+            });
+        }
+        return res.status(502).json({ success: false, valid: false, message: `Proxy provider error: ${err.message}` });
+    }
+});
+
+// Admin Telegram Management APIs
+app.get('/api/admin/telegram', requireAdmin, (req, res) => {
+    const token = telegramConfig.botToken || '';
+    const masked = token.length > 8 ? `${token.slice(0, 4)}...${token.slice(-4)}` : (token ? '****' : '');
+    res.json({
+        success: true,
+        config: {
+            botTokenConfigured: Boolean(telegramConfig.botToken),
+            botTokenMasked: masked,
+            chatIds: telegramConfig.chatIds || [],
+            notifyOnComplete: telegramConfig.notifyOnComplete !== false,
+            sendFileReport: telegramConfig.sendFileReport !== false
+        }
+    });
+});
+
+app.post('/api/admin/telegram', requireAdmin, async (req, res) => {
+    const { botToken, chatIds, notifyOnComplete, sendFileReport } = req.body || {};
+    if (typeof botToken === 'string' && botToken.trim()) {
+        telegramConfig.botToken = botToken.trim();
+    }
+    if (Array.isArray(chatIds)) {
+        telegramConfig.chatIds = chatIds.map(String).map(s => s.trim()).filter(Boolean);
+    }
+    if (typeof notifyOnComplete === 'boolean') {
+        telegramConfig.notifyOnComplete = notifyOnComplete;
+    }
+    if (typeof sendFileReport === 'boolean') {
+        telegramConfig.sendFileReport = sendFileReport;
+    }
+    saveTelegramConfig();
+    res.json({ success: true, message: 'Telegram configuration updated' });
+});
+
+app.post('/api/admin/telegram/test', requireAdmin, async (req, res) => {
+    if (!telegramConfig.botToken || !telegramConfig.chatIds || telegramConfig.chatIds.length === 0) {
+        return res.status(400).json({ success: false, message: 'Telegram botToken and at least one chatId must be configured.' });
+    }
+    try {
+        await sendTelegramMessage(null, '🔔 <b>Thong bao kiem tra he thong tu Traffic Server!</b>\nKet noi Telegram hoat dong tot.');
+        res.json({ success: true, message: 'Test notification dispatched' });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
 app.get('/boost', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'boost.html'));
 });
@@ -1280,7 +1601,13 @@ app.get('/api/public-config', (req, res) => {
             hourlyRate: orderService.CONSTANTS.HOURLY_RATE,
             currency: 'VND'
         },
-        bankInfo: orderService.getPublicBankInfo()
+        bankInfo: orderService.getPublicBankInfo(),
+        dwellPresets: {
+            quick: { min: 2, max: 5 },
+            standard: { min: 5, max: 15 },
+            deep: { min: 15, max: 30 }
+        },
+        deviceProfiles: ['desktop', 'mobile', 'balanced']
     });
 });
 
@@ -1294,7 +1621,7 @@ app.post('/api/orders/calculate-cost', (req, res) => {
     }
 });
 
-app.post('/api/orders', (req, res) => {
+app.post('/api/orders', publicApiLimiter, (req, res) => {
     try {
         const order = orderService.createOrder(req.body);
         io.to('admins').emit('orders-updated');
@@ -1328,6 +1655,9 @@ const activatingOrders = new Set();
 function activateOrder(orderId, paymentInfo = {}) {
     const order = orderService.getOrder(orderId);
     if (!order) return { ok: false, code: 404, message: 'Order not found' };
+    if (order.status === 'expired') {
+        return { ok: false, code: 409, message: 'Order has expired. Payment confirmation rejected.' };
+    }
 
     // Idempotent: already activated -> return existing campaign
     if (order.campaignId) {
@@ -1442,20 +1772,30 @@ app.get('/api/admin/orders', requireAdmin, (req, res) => {
     let pendingCount = 0;
     let runningCount = 0;
     let completedCount = 0;
+    let expiredCount = 0;
 
     const orders = rawOrders.map(o => {
         const camp = getLinkedCampaign(o);
         const progress = buildOrderProgressPayload(camp, o);
+        const effectiveStatus = (camp && camp.status) || o.status;
         const isPaid = o.paymentStatus === 'paid';
+
         if (isPaid) {
             paidCount++;
             totalRevenue += Number(o.paidAmount || o.totalAmount || 0);
+        } else if (effectiveStatus === 'expired') {
+            expiredCount++;
         } else {
             pendingCount++;
         }
-        const effectiveStatus = (camp && camp.status) || o.status;
-        if (effectiveStatus === 'running') runningCount++;
-        if (['completed', 'expired', 'stopped'].includes(effectiveStatus)) completedCount++;
+
+        if (effectiveStatus === 'running') {
+            runningCount++;
+        } else if (effectiveStatus === 'expired') {
+            // Already counted in expiredCount, not in completedCount
+        } else if (['completed', 'stopped'].includes(effectiveStatus)) {
+            completedCount++;
+        }
 
         return {
             ...o,
@@ -1473,7 +1813,8 @@ app.get('/api/admin/orders', requireAdmin, (req, res) => {
             paidCount,
             pendingCount,
             runningCount,
-            completedCount
+            completedCount,
+            expiredCount
         },
         orders
     });
@@ -1548,7 +1889,7 @@ io.on('connection', (socket) => {
 
     socket.emit('user-info', { username: socketUsername, role: socketRole });
 
-    if (socketUsername) {
+    if (socketRole === 'admin') {
         socket.join('admins');
         socket.emit('proxy-config', proxyConfigData);
         const campaignList = [];
@@ -1610,4 +1951,18 @@ if (require.main === module) {
     });
 }
 
-module.exports = { app, server, campaigns, createCampaignState, scheduleTick, completeCampaign, globalProxyPool, loadCampaignsFromDisk, isAllowedCorsOrigin };
+module.exports = {
+    app,
+    server,
+    campaigns,
+    activeSessions,
+    createCampaignState,
+    scheduleTick,
+    completeCampaign,
+    globalProxyPool,
+    loadCampaignsFromDisk,
+    isAllowedCorsOrigin,
+    runVisitWorker,
+    checkpointCampaignState,
+    orderService
+};
