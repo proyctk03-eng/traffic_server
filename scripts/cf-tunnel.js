@@ -66,22 +66,34 @@ async function cloudflareApiRequest(endpoint, options = {}) {
  */
 async function resolveAccountId({ token, accountId } = {}) {
     const explicit = String(accountId || process.env.CLOUDFLARE_ACCOUNT_ID || '').trim();
-    const accounts = await cloudflareApiRequest('/accounts', { token });
-    const list = Array.isArray(accounts) ? accounts.map(a => ({ id: a.id, name: a.name })) : [];
+    let accounts = [];
+    let accountsError = null;
+    try {
+        const rawAccounts = await cloudflareApiRequest('/accounts', { token });
+        accounts = Array.isArray(rawAccounts) ? rawAccounts.map(a => ({ id: a.id, name: a.name })) : [];
+    } catch (err) {
+        accountsError = err;
+        // Allow scoped tokens lacking "Account Settings: Read" (403/401 on /accounts)
+        // to continue when CLOUDFLARE_ACCOUNT_ID is supplied, or surface clear diagnostics.
+        if (!explicit && err.status !== 403 && err.status !== 401) {
+            throw err;
+        }
+    }
     return {
-        accounts: list,
-        accountId: explicit || (list[0] && list[0].id) || ''
+        accounts,
+        accountId: explicit || (accounts[0] && accounts[0].id) || '',
+        accountsError
     };
 }
 
 async function verifyCloudflareSetup(options = {}) {
-    const token = String(options.token || process.env.CLOUDFLARE_API_TOKEN || '').trim();
+    const token = String(options.token !== undefined ? options.token : (process.env.CLOUDFLARE_API_TOKEN || '')).trim();
     if (!token) {
         throw new Error('Thieu CLOUDFLARE_API_TOKEN. Tao Scoped API Token tai Cloudflare Dashboard -> My Profile -> API Tokens.');
     }
 
     const tokenInfo = await cloudflareApiRequest('/user/tokens/verify', { token });
-    const { accounts, accountId: resolvedAccountId } = await resolveAccountId({
+    const { accounts, accountId: resolvedAccountId, accountsError } = await resolveAccountId({
         token,
         accountId: options.accountId
     });
@@ -93,6 +105,9 @@ async function verifyCloudflareSetup(options = {}) {
     let warning = null;
 
     if (resolvedAccountId) {
+        if (accountsError) {
+            warning = `Token thieu quyen "Account -> Account Settings -> Read" (${accountsError.message}); dang dung CLOUDFLARE_ACCOUNT_ID da cau hinh.`;
+        }
         try {
             const rawPages = await cloudflareApiRequest(`/accounts/${resolvedAccountId}/pages/projects`, { token });
             pagesProjects = Array.isArray(rawPages)
@@ -114,6 +129,8 @@ async function verifyCloudflareSetup(options = {}) {
         } catch (err) {
             tunnelError = err.message;
         }
+    } else if (accountsError) {
+        warning = `GET /accounts bi tu choi (${accountsError.message}): token thieu quyen "Account -> Account Settings -> Read" va chua cau hinh CLOUDFLARE_ACCOUNT_ID trong .env / GitHub Secrets.`;
     } else if (accounts.length === 0) {
         warning = 'Token active nhung GET /accounts tra ve rong ([]): token thieu quyen "Account -> Account Settings -> Read" hoac chua cau hinh CLOUDFLARE_ACCOUNT_ID trong .env / GitHub Secrets.';
     }
@@ -131,15 +148,16 @@ async function verifyCloudflareSetup(options = {}) {
 }
 
 async function ensurePagesProject(options = {}) {
-    const token = String(options.token || process.env.CLOUDFLARE_API_TOKEN || '').trim();
+    const token = String(options.token !== undefined ? options.token : (process.env.CLOUDFLARE_API_TOKEN || '')).trim();
     if (!token) {
         throw new Error('Missing CLOUDFLARE_API_TOKEN');
     }
     const projectName = String(options.projectName || process.env.CLOUDFLARE_PAGES_PROJECT || 'traffic-server-demo').trim();
     const productionBranch = String(options.productionBranch || 'main').trim() || 'main';
-    const { accountId } = await resolveAccountId({ token, accountId: options.accountId });
+    const { accountId, accountsError } = await resolveAccountId({ token, accountId: options.accountId });
     if (!accountId) {
-        throw new Error('Missing CLOUDFLARE_ACCOUNT_ID (va token khong tu lay duoc /accounts).');
+        const reason = accountsError ? ` (${accountsError.message})` : '';
+        throw new Error(`Missing CLOUDFLARE_ACCOUNT_ID: scoped CLOUDFLARE_API_TOKEN khong lay duoc /accounts${reason} (thieu quyen "Account -> Account Settings -> Read"). Hay dien CLOUDFLARE_ACCOUNT_ID vao .env hoac GitHub Secrets.`);
     }
 
     try {
@@ -158,6 +176,13 @@ async function ensurePagesProject(options = {}) {
         }
     });
     return { created: true, project: created, accountId };
+}
+
+function normalizeTunnelUrl(tunnelUrl) {
+    const trimmed = String(tunnelUrl || '').trim().replace(/\/+$/, '');
+    if (!trimmed) return '';
+    if (/^https?:\/\//i.test(trimmed)) return trimmed;
+    return `https://${trimmed}`;
 }
 
 function parseTryCloudflareUrl(text) {
@@ -180,13 +205,34 @@ function findCloudflaredBinary() {
     return check.status === 0 ? 'cloudflared' : null;
 }
 
+function printMissingCloudflaredHelp() {
+    console.error('[cf-tunnel] Chua cai dat "cloudflared".');
+    console.error('  Windows: winget install --id Cloudflare.cloudflared -e');
+    console.error('  macOS:   brew install cloudflared');
+    console.error('  Linux:   https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/');
+}
+
+function printTunnelUrlsBanner(tunnelUrl, pagesUrl) {
+    const links = buildConnectUrls({ tunnelUrl, pagesUrl });
+    console.log('\n===============================================================');
+    console.log(`Live /boost URL:      ${links.directBoostUrl}`);
+    console.log(`Frontend Pages Link:  ${links.staticLinkedUrl}`);
+    console.log('Nhan Ctrl+C de dong Tunnel khi xong.');
+    console.log('===============================================================\n');
+}
+
+function buildNamedTunnelArgs(token) {
+    const cleanToken = String(token || '').trim();
+    if (!cleanToken) {
+        throw new Error('Thieu CLOUDFLARE_TUNNEL_TOKEN. Vao Cloudflare Zero Trust -> Networks -> Tunnels -> tao Named Tunnel va dien token vao .env.');
+    }
+    return ['tunnel', '--no-autoupdate', 'run', '--token', cleanToken];
+}
+
 function runQuickTunnel({ port = 3005, pagesUrl = DEFAULT_GH_PAGES_URL } = {}) {
     const bin = findCloudflaredBinary();
     if (!bin) {
-        console.error('[cf-tunnel] Chua cai dat "cloudflared".');
-        console.error('  Windows: winget install --id Cloudflare.cloudflared -e');
-        console.error('  macOS:   brew install cloudflared');
-        console.error('  Linux:   https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/');
+        printMissingCloudflaredHelp();
         process.exitCode = 1;
         return null;
     }
@@ -203,22 +249,69 @@ function runQuickTunnel({ port = 3005, pagesUrl = DEFAULT_GH_PAGES_URL } = {}) {
             const url = parseTryCloudflareUrl(text);
             if (url) {
                 printed = true;
-                const links = buildConnectUrls({ tunnelUrl: url, pagesUrl });
-                console.log('\n===============================================================');
-                console.log(`Live /boost URL:      ${links.directBoostUrl}`);
-                console.log(`Frontend Pages Link:  ${links.staticLinkedUrl}`);
-                console.log('Nhan Ctrl+C de dong Tunnel khi test xong.');
-                console.log('===============================================================\n');
+                printTunnelUrlsBanner(url, pagesUrl);
             }
         }
     };
 
     child.stdout.on('data', handleChunk);
     child.stderr.on('data', handleChunk);
+    child.on('error', (err) => {
+        console.error('[cf-tunnel] Khong the chay cloudflared:', err.message);
+        process.exitCode = 1;
+    });
     child.on('exit', (code) => {
         if (code && code !== 0) process.exitCode = code;
     });
     return child;
+}
+
+function runNamedTunnel({ token, tunnelUrl, pagesUrl = DEFAULT_GH_PAGES_URL } = {}) {
+    const rawToken = token !== undefined ? token : process.env.CLOUDFLARE_TUNNEL_TOKEN;
+    const args = buildNamedTunnelArgs(rawToken);
+
+    const bin = findCloudflaredBinary();
+    if (!bin) {
+        printMissingCloudflaredHelp();
+        process.exitCode = 1;
+        return null;
+    }
+
+    const rawUrl = tunnelUrl !== undefined ? tunnelUrl : process.env.CLOUDFLARE_TUNNEL_URL;
+    const cleanTunnelUrl = normalizeTunnelUrl(rawUrl);
+
+    console.log('[cf-tunnel] Dang khoi chay Cloudflare Named Tunnel...');
+    if (cleanTunnelUrl) {
+        printTunnelUrlsBanner(cleanTunnelUrl, pagesUrl);
+    } else {
+        console.log('[cf-tunnel] (Tuy chon) Dat CLOUDFLARE_TUNNEL_URL=https://api.yourdomain.com trong .env de in san link /boost va ?backend=.');
+    }
+
+    const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    child.stdout.on('data', (chunk) => process.stdout.write(chunk.toString()));
+    child.stderr.on('data', (chunk) => process.stderr.write(chunk.toString()));
+    child.on('error', (err) => {
+        console.error('[cf-tunnel] Khong the chay cloudflared Named Tunnel:', err.message);
+        process.exitCode = 1;
+    });
+    child.on('exit', (code) => {
+        if (code && code !== 0) process.exitCode = code;
+    });
+    return child;
+}
+
+function printVerifyDiagnostics(report) {
+    if (!report.accountId || report.warning) {
+        console.log('\n[Diagnostics] Huong dan khac phuc Account ID / Token:');
+        console.log('  1. Them quyen "Account -> Account Settings -> Read" cho CLOUDFLARE_API_TOKEN, HOAC');
+        console.log('  2. Dien truc tiep CLOUDFLARE_ACCOUNT_ID=<account_id> vao file .env (va GitHub Secrets).');
+    }
+    if (report.pagesError) {
+        console.log('[Diagnostics] Pages check loi: dam bao token co quyen "Account -> Cloudflare Pages -> Edit" (hoac Read).');
+    }
+    if (report.tunnelError) {
+        console.log('[Diagnostics] Tunnel check loi: dam bao token co quyen "Account -> Cloudflare Tunnel -> Read" (hoac Edit).');
+    }
 }
 
 async function main() {
@@ -235,6 +328,7 @@ async function main() {
         else console.log('Pages Projects:', report.pagesProjects);
         if (report.tunnelError) console.log('Tunnels check:', report.tunnelError);
         else console.log('Tunnels:', report.tunnels);
+        printVerifyDiagnostics(report);
         return;
     }
 
@@ -257,10 +351,22 @@ async function main() {
         return;
     }
 
+    if (cmd === 'named') {
+        const tunnelUrl = arg1 || process.env.CLOUDFLARE_TUNNEL_URL || '';
+        const pagesUrl = arg2 || process.env.STATIC_DEMO_URL || DEFAULT_GH_PAGES_URL;
+        runNamedTunnel({
+            token: process.env.CLOUDFLARE_TUNNEL_TOKEN,
+            tunnelUrl,
+            pagesUrl
+        });
+        return;
+    }
+
     console.log('Usage:');
-    console.log('  node scripts/cf-tunnel.js quick [port] [pagesUrl]   # Mo Quick Tunnel (*.trycloudflare.com)');
-    console.log('  node scripts/cf-tunnel.js verify                    # Kiem tra CLOUDFLARE_API_TOKEN & Pages/Tunnels');
-    console.log('  node scripts/cf-tunnel.js ensure-pages [name]       # Tao Pages project neu chua ton tai');
+    console.log('  node scripts/cf-tunnel.js quick [port] [pagesUrl]         # Mo Quick Tunnel (*.trycloudflare.com)');
+    console.log('  node scripts/cf-tunnel.js named [tunnelUrl] [pagesUrl]    # Chay Named Tunnel voi CLOUDFLARE_TUNNEL_TOKEN');
+    console.log('  node scripts/cf-tunnel.js verify                          # Kiem tra CLOUDFLARE_API_TOKEN & Pages/Tunnels');
+    console.log('  node scripts/cf-tunnel.js ensure-pages [name]             # Tao Pages project neu chua ton tai');
 }
 
 if (require.main === module) {
@@ -272,12 +378,17 @@ if (require.main === module) {
 
 module.exports = {
     CF_API_BASE,
+    DEFAULT_GH_PAGES_URL,
     loadDotEnv,
     cloudflareApiRequest,
     resolveAccountId,
     verifyCloudflareSetup,
     ensurePagesProject,
+    normalizeTunnelUrl,
     parseTryCloudflareUrl,
     buildConnectUrls,
-    runQuickTunnel
+    findCloudflaredBinary,
+    buildNamedTunnelArgs,
+    runQuickTunnel,
+    runNamedTunnel
 };

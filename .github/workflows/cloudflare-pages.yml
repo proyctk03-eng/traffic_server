@@ -25,7 +25,12 @@ jobs:
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping Cloudflare Pages CLI deploy: CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID not configured in GitHub Secrets."
+            if [ -z "$CF_TOKEN" ]; then
+              echo "::notice::Skipping Cloudflare Pages deploy: missing GitHub Secret CLOUDFLARE_API_TOKEN (needs Cloudflare Pages: Edit + Account Settings: Read)."
+            fi
+            if [ -z "$CF_ACC" ]; then
+              echo "::notice::Skipping Cloudflare Pages deploy: missing GitHub Secret CLOUDFLARE_ACCOUNT_ID."
+            fi
           fi
 
       - name: Setup Node.js

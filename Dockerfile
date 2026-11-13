@@ -21,4 +21,7 @@ ENV PORT=3005
 
 EXPOSE 3005
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD node -e "const http = require('http'); const port = process.env.PORT || '3005'; const url = String(port) === '3005' ? 'http://127.0.0.1:3005/api/health' : 'http://127.0.0.1:' + port + '/api/health'; const req = http.get(url, (res) => { res.resume(); process.exit(res.statusCode === 200 ? 0 : 1); }); req.setTimeout(4000, () => { req.destroy(); process.exit(1); }); req.on('error', () => process.exit(1));"
+
 CMD ["node", "server.js"]

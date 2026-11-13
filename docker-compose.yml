@@ -1,0 +1,31 @@
+services:
+  traffic-server:
+    build: .
+    container_name: traffic-server
+    restart: unless-stopped
+    init: true
+    user: node
+    ports:
+      - "${PORT:-3005}:3005"
+    env_file:
+      - path: ./.env
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: "3005"
+    volumes:
+      - ./orders:/app/orders
+      - ./campaigns:/app/campaigns
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: traffic-cloudflared
+    profiles:
+      - tunnel
+    restart: unless-stopped
+    depends_on:
+      traffic-server:
+        condition: service_healthy
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    command: tunnel --no-autoupdate run

@@ -1,7 +1,12 @@
-node_modules
-dist-demo
-orders
-campaigns
+# Dependencies & build output
+node_modules/
+dist-demo/
+
+# Runtime data
+orders/
+campaigns/
+
+# Local secrets & runtime state
 admin.json
 sessions.json
 telegram_config.json
@@ -9,9 +14,17 @@ proxy_config.json
 payment_config.json
 .env
 .env.*
-.git
-.github
-.agents
-test
-e2e_tests
+
+# Dev, tests & metadata
+.git/
+.github/
+.agents/
+test/
+e2e_tests/
+test_distribution.js
 *.log
+*.md
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+.gitignore
