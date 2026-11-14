@@ -18,6 +18,7 @@ const PAYMENT_CONFIG_FILE = path.join(ROOT_DIR, 'payment_config.json');
 const PROXY_CONFIG_FILE = path.join(ROOT_DIR, 'proxy_config.json');
 const TELEGRAM_CONFIG_FILE = path.join(ROOT_DIR, 'telegram_config.json');
 const CAMPAIGNS_DIR = path.join(ROOT_DIR, 'campaigns');
+const ORDERS_DIR = path.join(ROOT_DIR, 'orders');
 const LOCK_FILE = path.join(os.tmpdir(), 'traffic_server_unit_test.lock');
 
 const MANAGED_FILES = [
@@ -91,12 +92,30 @@ function snapshotFiles(paths) {
     });
 }
 
+const SLEEP_ARR = new Int32Array(new SharedArrayBuffer(4));
+
+function sleepSyncMs(ms) {
+    Atomics.wait(SLEEP_ARR, 0, 0, ms);
+}
+
+function retryFsOp(fn, maxAttempts = 12, delayMs = 40) {
+    for (let attempt = 1; ; attempt++) {
+        try {
+            return fn();
+        } catch (err) {
+            const transient = err && (err.code === 'EBUSY' || err.code === 'EPERM' || err.code === 'EACCES');
+            if (!transient || attempt >= maxAttempts) throw err;
+            sleepSyncMs(delayMs);
+        }
+    }
+}
+
 function restoreFiles(snapshots) {
     for (const snap of snapshots) {
         if (snap.existed) {
-            fs.writeFileSync(snap.filePath, snap.content);
+            retryFsOp(() => fs.writeFileSync(snap.filePath, snap.content));
         } else if (fs.existsSync(snap.filePath)) {
-            fs.unlinkSync(snap.filePath);
+            retryFsOp(() => fs.unlinkSync(snap.filePath));
         }
     }
 }
@@ -119,7 +138,7 @@ function seedTemporaryAdminSession() {
 
     const token = `test-admin-${crypto.randomUUID()}`;
     sessions[token] = { username: adminUsername, role: 'admin' };
-    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(sessions, null, 2), 'utf-8');
+    retryFsOp(() => fs.writeFileSync(SESSIONS_FILE, JSON.stringify(sessions, null, 2), 'utf-8'));
     return { token, username: adminUsername };
 }
 
@@ -151,6 +170,8 @@ async function setupServerEnv(options = {}) {
     process.once('exit', onExit);
 
     const snapshots = snapshotFiles(MANAGED_FILES);
+    const initialOrderFiles = new Set(fs.existsSync(ORDERS_DIR) ? fs.readdirSync(ORDERS_DIR) : []);
+    const initialCampaignFiles = new Set(fs.existsSync(CAMPAIGNS_DIR) ? fs.readdirSync(CAMPAIGNS_DIR) : []);
     let testServer = null;
     let adminSession = null;
     let serverModule = null;
@@ -159,10 +180,12 @@ async function setupServerEnv(options = {}) {
     const trackedOrders = new Set();
     const trackedCampaigns = new Set();
     const trackedProxyKeys = new Set();
+    const trackedSessionTokens = new Set();
     const httpRequestImpl = options.httpRequest || http.request;
 
     try {
         adminSession = seedTemporaryAdminSession();
+        trackedSessionTokens.add(adminSession.token);
         orderService = require('../../orderService');
         serverModule = require('../../server');
 
@@ -279,25 +302,61 @@ async function setupServerEnv(options = {}) {
         });
     }
 
-    async function loginAsGuest() {
-        const res = await request('POST', '/api/login', {
-            body: { username: '1', password: '1', rememberMe: false }
-        });
-        if (res.status !== 200 || !res.cookies.session_token) {
-            throw new Error(`Failed to obtain guest session cookie: status=${res.status}`);
+    /**
+     * Seeds a transient non-admin session record into the active session store
+     * (and sessions.json) solely to verify 403 RBAC enforcement without any login backdoor.
+     */
+    function seedNonAdminSession({ username = 'nonadmin-test', role = 'guest' } = {}) {
+        if (!role || role === 'admin') {
+            throw new Error('seedNonAdminSession requires a non-admin role');
         }
-        return `session_token=${res.cookies.session_token}`;
+        const token = `test-nonadmin-${crypto.randomUUID()}`;
+        const sessionObj = {
+            username,
+            role,
+            expiresAt: Date.now() + 60 * 60 * 1000
+        };
+        serverModule.activeSessions.set(token, sessionObj);
+        trackedSessionTokens.add(token);
+
+        let sessions = {};
+        if (fs.existsSync(SESSIONS_FILE)) {
+            try {
+                sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf-8')) || {};
+            } catch {
+                sessions = {};
+            }
+        }
+        sessions[token] = sessionObj;
+        retryFsOp(() => fs.writeFileSync(SESSIONS_FILE, JSON.stringify(sessions, null, 2), 'utf-8'));
+        return `session_token=${token}`;
     }
 
     async function teardown() {
         try {
+            try {
+                for (const camp of serverModule.campaigns.values()) {
+                    camp.status = 'stopped';
+                }
+            } catch {}
             if (testServer) {
-                await new Promise((resolve) => testServer.close(resolve));
+                const srv = testServer;
                 testServer = null;
+                await new Promise((resolve) => {
+                    srv.close(resolve);
+                    if (typeof srv.closeAllConnections === 'function') srv.closeAllConnections();
+                });
             }
         } finally {
             for (const orderId of trackedOrders) {
                 try { orderService.deleteOrder(orderId); } catch {}
+            }
+            if (fs.existsSync(ORDERS_DIR)) {
+                for (const file of fs.readdirSync(ORDERS_DIR)) {
+                    if (!initialOrderFiles.has(file) && /^ORD-.*\.json$/i.test(file)) {
+                        try { retryFsOp(() => fs.unlinkSync(path.join(ORDERS_DIR, file))); } catch {}
+                    }
+                }
             }
             for (const campId of trackedCampaigns) {
                 try {
@@ -308,7 +367,27 @@ async function setupServerEnv(options = {}) {
                 try {
                     const campPath = path.join(CAMPAIGNS_DIR, `${campId}.json`);
                     if (fs.existsSync(campPath)) fs.unlinkSync(campPath);
+                    const campTmpPath = path.join(CAMPAIGNS_DIR, `${campId}.tmp`);
+                    if (fs.existsSync(campTmpPath)) fs.unlinkSync(campTmpPath);
                 } catch {}
+            }
+            if (fs.existsSync(CAMPAIGNS_DIR)) {
+                for (const file of fs.readdirSync(CAMPAIGNS_DIR)) {
+                    if (!initialCampaignFiles.has(file) && /\.(json|tmp)$/i.test(file)) {
+                        const cid = file.replace(/\.(json|tmp)$/i, '');
+                        try {
+                            const camp = serverModule.campaigns.get(cid);
+                            if (camp) camp.status = 'stopped';
+                            serverModule.campaigns.delete(cid);
+                        } catch {}
+                        try { retryFsOp(() => fs.unlinkSync(path.join(CAMPAIGNS_DIR, file))); } catch {}
+                    }
+                }
+            }
+            if (serverModule && serverModule.activeSessions) {
+                for (const token of trackedSessionTokens) {
+                    try { serverModule.activeSessions.delete(token); } catch {}
+                }
             }
             for (const key of trackedProxyKeys) {
                 try { serverModule.globalProxyPool.delete(key); } catch {}
@@ -330,7 +409,7 @@ async function setupServerEnv(options = {}) {
         serverModule,
         snapshots,
         request,
-        loginAsGuest,
+        seedNonAdminSession,
         trackOrder,
         trackCampaign,
         trackProxyKey,
@@ -365,6 +444,7 @@ async function withTempAdminCredentials(tempPassword, fn) {
 module.exports = {
     ROOT_DIR,
     CAMPAIGNS_DIR,
+    ORDERS_DIR,
     SESSIONS_FILE,
     PAYMENT_CONFIG_FILE,
     PROXY_CONFIG_FILE,

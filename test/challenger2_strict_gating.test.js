@@ -332,6 +332,7 @@ describe('Challenger 2: Strict Zero-Click Pre-Payment Gating & Auto-Activation',
         assert.ok(globalProxyPool.has('kiot_customer_commercial_key_999'));
 
         // Cleanup created campaign
+        env.trackCampaign(activatedCampaignId);
         campaigns.delete(activatedCampaignId);
     });
 

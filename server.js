@@ -123,6 +123,40 @@ function verifyAdminCredentials(username, password) {
     }
 }
 
+function isDefaultAdminPassword() {
+    if (!fs.existsSync(ADMIN_CONFIG_PATH)) return true;
+    try {
+        const config = JSON.parse(fs.readFileSync(ADMIN_CONFIG_PATH, 'utf-8'));
+        return Boolean(config && config.salt && config.passwordHash && hashPassword('admin123456', config.salt) === config.passwordHash);
+    } catch (e) {
+        return false;
+    }
+}
+
+// ─── Atomic JSON Persistence (Windows EBUSY/EPERM retry-safe) ──────────────────
+const FS_RETRY_SLEEP_ARR = new Int32Array(new SharedArrayBuffer(4));
+
+function writeJsonAtomicSync(filePath, data, spaces = 2) {
+    const tmpPath = `${filePath}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+    const serialized = JSON.stringify(data, null, spaces);
+    try {
+        fs.writeFileSync(tmpPath, serialized, 'utf-8');
+        for (let attempt = 1; ; attempt++) {
+            try {
+                fs.renameSync(tmpPath, filePath);
+                return;
+            } catch (err) {
+                const transient = err && (err.code === 'EBUSY' || err.code === 'EPERM' || err.code === 'EACCES');
+                if (!transient || attempt >= 6) throw err;
+                Atomics.wait(FS_RETRY_SLEEP_ARR, 0, 0, 20 * attempt);
+            }
+        }
+    } catch (err) {
+        try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch {}
+        throw err;
+    }
+}
+
 // ─── Sessions ──────────────────────────────────────────────────────────────────
 const SESSIONS_FILE = path.join(__dirname, 'sessions.json');
 function loadSessions() {
@@ -139,7 +173,7 @@ function saveSessions() {
     try {
         const obj = {};
         for (const [k, v] of activeSessions.entries()) obj[k] = v;
-        fs.writeFileSync(SESSIONS_FILE, JSON.stringify(obj, null, 2));
+        writeJsonAtomicSync(SESSIONS_FILE, obj, 2);
     } catch (e) {}
 }
 const activeSessions = loadSessions();
@@ -669,7 +703,9 @@ function buildOrderProgressPayload(campaign, order) {
             actualStartTime: campaign.actualStartTime || (order && order.paidAt) || null,
             actualEndTime: campaign.actualEndTime || (order && order.completedAt) || null,
             browserMode: (campaign.config && campaign.config.browserMode) || 'request',
-            scheduleMode: (campaign.config && campaign.config.scheduleMode) || (order && order.scheduleMode) || 'smart'
+            scheduleMode: (campaign.config && campaign.config.scheduleMode) || (order && order.scheduleMode) || 'smart',
+            dwellPreset: (campaign.config && campaign.config.dwellPreset) || (order && order.dwellPreset) || 'short',
+            deviceProfile: (campaign.config && campaign.config.deviceProfile) || (order && order.deviceProfile) || 'mixed'
         };
     }
     if (order && order.campaignId) {
@@ -688,7 +724,9 @@ function buildOrderProgressPayload(campaign, order) {
             actualStartTime: order.paidAt || null,
             actualEndTime: order.completedAt || null,
             browserMode: order.browserMode || 'request',
-            scheduleMode: order.scheduleMode || 'smart'
+            scheduleMode: order.scheduleMode || 'smart',
+            dwellPreset: order.dwellPreset || 'short',
+            deviceProfile: order.deviceProfile || 'mixed'
         };
     }
     return null;
@@ -788,7 +826,6 @@ function checkpointCampaignState(campaignId) {
     const campaign = campaigns.get(campaignId);
     if (!campaign) return;
     const filePath = path.join(CAMPAIGNS_DIR, `${campaignId}.json`);
-    const tmpPath = path.join(CAMPAIGNS_DIR, `${campaignId}.tmp`);
     try {
         const payload = {
             ...campaign.config,
@@ -800,8 +837,7 @@ function checkpointCampaignState(campaignId) {
             overdueErrors: campaign.overdueErrors || 0,
             status: campaign.status
         };
-        fs.writeFileSync(tmpPath, JSON.stringify(payload, null, 2), 'utf-8');
-        fs.renameSync(tmpPath, filePath);
+        writeJsonAtomicSync(filePath, payload, 2);
     } catch (e) {}
 }
 
@@ -872,7 +908,12 @@ async function runVisitWorker(campaignId, keyState) {
             }
         }
 
-        const userAgent = getRandomItem(USER_AGENTS);
+        const profile = String(campaign.config.deviceProfile || 'mixed').toLowerCase();
+        const mobileUaPattern = /(Android|iPhone|Mobile)/i;
+        const uaPool = profile === 'mobile'
+            ? USER_AGENTS.filter(ua => mobileUaPattern.test(ua))
+            : (profile === 'desktop' ? USER_AGENTS.filter(ua => !mobileUaPattern.test(ua)) : USER_AGENTS);
+        const userAgent = getRandomItem(uaPool.length > 0 ? uaPool : USER_AGENTS);
         const referer = getRandomItem([
             'https://www.google.com/', 'https://www.google.com.vn/', 'https://www.google.com.vn/',
             'https://www.facebook.com/', 'https://m.facebook.com/', 'https://www.bing.com/',
@@ -1287,18 +1328,25 @@ app.use((req, res, next) => {
 });
 
 // Rate limiting (in-memory sliding window)
-const rateLimitBuckets = new Map();
 function createRateLimiter({ windowMs = 60000, max = 100, message = 'Too many requests, please try again later.' } = {}) {
+    const rateLimitBuckets = new Map();
     return (req, res, next) => {
         if (process.env.RATE_LIMIT_DISABLED === 'true') return next();
         const clientIp = req.ip || req.socket?.remoteAddress || 'unknown';
         const now = Date.now();
+        const cutoff = now - windowMs;
+        if (rateLimitBuckets.size > 200) {
+            for (const [k, tsList] of rateLimitBuckets.entries()) {
+                if (tsList.length === 0 || tsList[tsList.length - 1] < cutoff) {
+                    rateLimitBuckets.delete(k);
+                }
+            }
+        }
         let bucket = rateLimitBuckets.get(clientIp);
         if (!bucket) {
             bucket = [];
             rateLimitBuckets.set(clientIp, bucket);
         }
-        const cutoff = now - windowMs;
         while (bucket.length > 0 && bucket[0] < cutoff) {
             bucket.shift();
         }
@@ -1330,7 +1378,9 @@ function requireAuth(req, res, next) {
         req.path === '/order.html' || req.path === '/track.html' || req.path === '/api/public-config' ||
         req.path === '/api/health' || req.path === '/api/proxy/validate' ||
         req.path === '/boost' || req.path === '/boost/' || req.path === '/boost.html' ||
-        req.path === '/js/boost.js' || req.path === '/js/timeDistribution.js';
+        req.path === '/js/boost-shared.js' || req.path === '/js/boost-demo.js' ||
+        req.path === '/js/boost-ui.js' || req.path === '/js/boost.js' ||
+        req.path === '/js/timeDistribution.js';
     if (isPublicPath) return next();
     if (!req.isAuthenticated) {
         if (req.path.startsWith('/api/')) return res.status(401).json({ success: false, message: 'Unauthorized' });
@@ -1348,12 +1398,6 @@ function requireAdmin(req, res, next) {
     next();
 }
 
-function isGuestLoginAllowed() {
-    if (process.env.ALLOW_GUEST_LOGIN === 'false') return false;
-    if (process.env.ALLOW_GUEST_LOGIN === 'true') return true;
-    return (process.env.NODE_ENV === 'test' || require.main !== module);
-}
-
 // ─── REST API ──────────────────────────────────────────────────────────────────
 
 app.get('/api/me', (req, res) => {
@@ -1364,27 +1408,22 @@ app.post('/api/login', loginRateLimiter, (req, res) => {
     const { username, password, rememberMe } = req.body || {};
     if (!username || !password) return res.status(400).json({ success: false, message: 'Vui long dien du thong tin.' });
 
-    let role = null;
-    if (verifyAdminCredentials(username, password)) {
-        role = 'admin';
-    } else if (isGuestLoginAllowed() && String(username).trim() === '1' && String(password) === '1') {
-        role = 'guest';
+    if (!verifyAdminCredentials(username, password)) {
+        return res.status(401).json({ success: false, message: 'Tai khoan hoac mat khau khong chinh xac.' });
     }
 
-    if (role) {
-        const token = crypto.randomUUID();
-        const expiresAt = Date.now() + 24 * 60 * 60 * 1000; // 24 hours TTL
-        const userObj = { username, role, expiresAt };
-        activeSessions.set(token, userObj); saveSessions();
-        const cookieOptions = { httpOnly: true, path: '/' };
-        if (rememberMe !== false) {
-            cookieOptions.maxAge = 30 * 24 * 60 * 60 * 1000;
-        }
-        res.cookie('session_token', token, cookieOptions);
-        const wantsBearer = String(req.headers['x-auth-mode'] || '').toLowerCase() === 'bearer';
-        return res.json(wantsBearer ? { success: true, role, username, token } : { success: true, role, username });
+    const role = 'admin';
+    const token = crypto.randomUUID();
+    const expiresAt = Date.now() + 24 * 60 * 60 * 1000; // 24 hours TTL
+    const userObj = { username, role, expiresAt };
+    activeSessions.set(token, userObj); saveSessions();
+    const cookieOptions = { httpOnly: true, path: '/' };
+    if (rememberMe !== false) {
+        cookieOptions.maxAge = 30 * 24 * 60 * 60 * 1000;
     }
-    return res.status(401).json({ success: false, message: 'Tai khoan hoac mat khau khong chinh xac.' });
+    res.cookie('session_token', token, cookieOptions);
+    const wantsBearer = String(req.headers['x-auth-mode'] || '').toLowerCase() === 'bearer';
+    return res.json(wantsBearer ? { success: true, role, username, token } : { success: true, role, username });
 });
 
 app.post('/api/logout', (req, res) => {
@@ -1397,7 +1436,7 @@ app.post('/api/change-password', requireAdmin, (req, res) => {
     const { newUsername, newPassword, currentPassword } = req.body;
     if (!newUsername || !newPassword || !currentPassword) return res.status(400).json({ success: false, message: 'Dien du thong tin.' });
     if (!verifyAdminCredentials(req.username, currentPassword)) return res.status(401).json({ success: false, message: 'Mat khau hien tai khong dung.' });
-    try { updateAdminAccount(newUsername, newPassword); activeSessions.set(req.sessionToken, { username: newUsername, role: 'admin' }); saveSessions(); return res.json({ success: true }); }
+    try { updateAdminAccount(newUsername, newPassword); activeSessions.set(req.sessionToken, { username: newUsername, role: 'admin', expiresAt: Date.now() + 24 * 60 * 60 * 1000 }); saveSessions(); return res.json({ success: true }); }
     catch (e) { return res.status(500).json({ success: false, message: 'Loi luu.' }); }
 });
 
@@ -1431,6 +1470,11 @@ app.get('/api/campaigns', requireAdmin, (req, res) => {
 
 app.post('/api/campaigns', requireAdmin, (req, res) => {
     const config = { ...req.body, browserMode: 'request' };
+    if (config.dwellPreset && (!Number(config.dwellMin) || !Number(config.dwellMax))) {
+        const bounds = orderService.resolveDwellBounds(config.dwellPreset);
+        config.dwellMin = Number(config.dwellMin) || bounds.min;
+        config.dwellMax = Number(config.dwellMax) || bounds.max;
+    }
     if (!config.targetUrl || !config.startTime || !config.endTime || !config.targetClicks) {
         return res.status(400).json({ success: false, message: 'Thieu truong bat buoc.' });
     }
@@ -1500,7 +1544,8 @@ app.get('/api/health', (req, res) => {
         tunnel: {
             type: namedTunnelConfigured ? 'named' : 'quick',
             configured: Boolean(namedTunnelConfigured || process.env.CLOUDFLARE_TUNNEL_DOMAIN)
-        }
+        },
+        guestEnabled: false
     });
 });
 
@@ -1595,6 +1640,9 @@ app.get('/api/public-config', (req, res) => {
         role: req.userRole || null,
         username: req.username || null,
         singleAccountMode: true,
+        guestEnabled: false,
+        orderExpireMinutes: Math.round(orderService.ORDER_TTL_MS / 60000),
+        defaultPasswordWarning: Boolean(req.isAuthenticated && req.userRole === 'admin' && isDefaultAdminPassword()),
         browserMode: 'request',
         pricing: {
             clickRate: orderService.CONSTANTS.CLICK_RATE,
@@ -1602,12 +1650,8 @@ app.get('/api/public-config', (req, res) => {
             currency: 'VND'
         },
         bankInfo: orderService.getPublicBankInfo(),
-        dwellPresets: {
-            quick: { min: 2, max: 5 },
-            standard: { min: 5, max: 15 },
-            deep: { min: 15, max: 30 }
-        },
-        deviceProfiles: ['desktop', 'mobile', 'balanced']
+        dwellPresets: { ...orderService.DWELL_PRESET_BOUNDS },
+        deviceProfiles: ['mixed', 'mobile', 'desktop', 'balanced']
     });
 });
 
@@ -1674,6 +1718,7 @@ function activateOrder(orderId, paymentInfo = {}) {
         const startTime = Date.now();
         const endTime = startTime + Math.round(order.durationHours * 3600000);
 
+        const dwellBounds = orderService.resolveDwellBounds(order.dwellPreset);
         const campaignConfig = {
             name: order.name || `Order ${order.orderCode}`,
             targetUrl: order.targetUrl,
@@ -1686,8 +1731,10 @@ function activateOrder(orderId, paymentInfo = {}) {
             customBlocks: order.scheduleMode === 'custom' ? (order.customBlocks || null) : null,
             browserMode: 'request',
             cleanMode: 'incognito',
-            dwellMin: 2,
-            dwellMax: 5,
+            dwellMin: dwellBounds.min,
+            dwellMax: dwellBounds.max,
+            dwellPreset: order.dwellPreset || 'short',
+            deviceProfile: order.deviceProfile || 'mixed',
             humanActions: true,
             randomLinks: order.randomLinks !== false,
             dedupIp: order.dedupIp !== false,
@@ -1964,5 +2011,6 @@ module.exports = {
     isAllowedCorsOrigin,
     runVisitWorker,
     checkpointCampaignState,
+    saveSessions,
     orderService
 };

@@ -32,7 +32,7 @@ async function getClosedLocalPort() {
 
 describe('Commercial Features Comprehensive Test Suite', () => {
     let env = null;
-    let guestCookie = null;
+    let nonAdminCookie = null;
     let closedPort = 0;
     let originalProxyConfig = null;
 
@@ -60,7 +60,7 @@ describe('Commercial Features Comprehensive Test Suite', () => {
         } = env.serverModule);
 
         closedPort = await getClosedLocalPort();
-        guestCookie = await env.loginAsGuest();
+        nonAdminCookie = env.seedNonAdminSession();
 
         const proxyRes = await env.request('GET', '/api/proxy-config', { cookie: env.adminCookie });
         originalProxyConfig = proxyRes.body && proxyRes.body.data
@@ -378,8 +378,8 @@ describe('Commercial Features Comprehensive Test Suite', () => {
                 const unauth = await env.request(ep.method, ep.url, { body: ep.body || null });
                 assert.strictEqual(unauth.status, 401, `Expected 401 unauthenticated for ${ep.method} ${ep.url}`);
 
-                const guest = await env.request(ep.method, ep.url, { cookie: guestCookie, body: ep.body || null });
-                assert.strictEqual(guest.status, 403, `Expected 403 guest for ${ep.method} ${ep.url}`);
+                const nonAdmin = await env.request(ep.method, ep.url, { cookie: nonAdminCookie, body: ep.body || null });
+                assert.strictEqual(nonAdmin.status, 403, `Expected 403 non-admin for ${ep.method} ${ep.url}`);
             }
         });
 
@@ -852,12 +852,19 @@ describe('Commercial Features Comprehensive Test Suite', () => {
             assert.strictEqual(calcRes.body.totalAmount, 44000);
         });
 
-        it('enforces auth on GET /api/admin/orders (401 unauthenticated, 403 guest, 200 admin) and root / redirect', async () => {
+        it('enforces auth on GET /api/admin/orders (401 unauthenticated, 403 non-admin, 200 admin), rejects 1/1 login, and root / redirect', async () => {
             const unauthAdminOrders = await env.request('GET', '/api/admin/orders');
             assert.strictEqual(unauthAdminOrders.status, 401);
 
-            const guestAdminOrders = await env.request('GET', '/api/admin/orders', { cookie: guestCookie });
-            assert.strictEqual(guestAdminOrders.status, 403);
+            const nonAdminOrders = await env.request('GET', '/api/admin/orders', { cookie: nonAdminCookie });
+            assert.strictEqual(nonAdminOrders.status, 403);
+
+            const legacyLogin = await env.request('POST', '/api/login', { body: { username: '1', password: '1' } });
+            assert.strictEqual(legacyLogin.status, 401);
+
+            const pubCfg = await env.request('GET', '/api/public-config');
+            assert.strictEqual(pubCfg.status, 200);
+            assert.strictEqual(pubCfg.body.guestEnabled, false);
 
             const adminOrders = await env.request('GET', '/api/admin/orders', { cookie: env.adminCookie });
             assert.strictEqual(adminOrders.status, 200);

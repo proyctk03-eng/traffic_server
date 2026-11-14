@@ -269,7 +269,13 @@
                 body: JSON.stringify({ username, password, rememberMe })
             });
             if (!res.ok || !data.success || (data.role && data.role !== 'admin')) {
-                S.showAlert('login-modal-msg', (data && data.message) || 'Đăng nhập thất bại (chỉ hỗ trợ 1 tài khoản Admin).', 'err');
+                if (res.ok && data.success && data.role && data.role !== 'admin') {
+                    apiJson('/api/logout', { method: 'POST', body: '{}' }).catch(() => {});
+                }
+                const errMsg = (data && data.role && data.role !== 'admin')
+                    ? 'Chỉ hỗ trợ đăng nhập tài khoản Admin duy nhất.'
+                    : ((data && data.message) || 'Đăng nhập thất bại (chỉ hỗ trợ 1 tài khoản Admin).');
+                S.showAlert('login-modal-msg', errMsg, 'err');
                 return;
             }
             if (state.mode === 'remote' && data.token) {

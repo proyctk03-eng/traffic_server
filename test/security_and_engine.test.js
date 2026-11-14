@@ -17,7 +17,7 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 const axios = require('axios');
 
-const { setupServerEnv, ROOT_DIR, CAMPAIGNS_DIR } = require('./helpers/test_env');
+const { setupServerEnv, withTempAdminCredentials, ROOT_DIR, CAMPAIGNS_DIR, SESSIONS_FILE } = require('./helpers/test_env');
 const { SocketClient } = require('./helpers/socket_client');
 const orderService = require('../orderService');
 
@@ -31,6 +31,7 @@ describe('Security Hardening, Engine Reliability & Backend API Test Suite', () =
     let globalProxyPool = null;
     let runVisitWorker = null;
     let checkpointCampaignState = null;
+    let saveSessions = null;
 
     const originalAxiosGet = axios.get;
     const originalAxiosPost = axios.post;
@@ -45,7 +46,8 @@ describe('Security Hardening, Engine Reliability & Backend API Test Suite', () =
             completeCampaign,
             globalProxyPool,
             runVisitWorker,
-            checkpointCampaignState
+            checkpointCampaignState,
+            saveSessions
         } = env.serverModule);
 
         // Mock external outgoing network calls to avoid hitting live services
@@ -383,6 +385,8 @@ describe('Security Hardening, Engine Reliability & Backend API Test Suite', () =
                 axios.get = origGet;
                 campaigns.delete(campaignId);
                 globalProxyPool.delete(testKey);
+                try { fs.unlinkSync(path.join(CAMPAIGNS_DIR, `${campaignId}.json`)); } catch {}
+                try { fs.unlinkSync(path.join(CAMPAIGNS_DIR, `${campaignId}.tmp`)); } catch {}
             }
         });
 
@@ -427,6 +431,8 @@ describe('Security Hardening, Engine Reliability & Backend API Test Suite', () =
                 axios.get = origGet;
                 campaigns.delete(campaignId);
                 globalProxyPool.delete(testKey);
+                try { fs.unlinkSync(path.join(CAMPAIGNS_DIR, `${campaignId}.json`)); } catch {}
+                try { fs.unlinkSync(path.join(CAMPAIGNS_DIR, `${campaignId}.tmp`)); } catch {}
             }
         });
     });
@@ -435,16 +441,24 @@ describe('Security Hardening, Engine Reliability & Backend API Test Suite', () =
     // SUITE 3: Authentication, Session TTL & Account Hardening
     // ─────────────────────────────────────────────────────────────────────────
     describe('3. Authentication & Account Hardening', () => {
-        it('rejects guest 1/1 credentials with HTTP 401 when ALLOW_GUEST_LOGIN is disabled', async () => {
+        it('unconditionally rejects guest 1/1 credentials with HTTP 401 and reports guestEnabled=false', async () => {
             const savedGuest = process.env.ALLOW_GUEST_LOGIN;
             try {
-                process.env.ALLOW_GUEST_LOGIN = 'false';
+                process.env.ALLOW_GUEST_LOGIN = 'true';
 
                 const res = await env.request('POST', '/api/login', {
                     body: { username: '1', password: '1', rememberMe: false }
                 });
-                assert.strictEqual(res.status, 401, 'Guest 1/1 credentials must be rejected with 401');
+                assert.strictEqual(res.status, 401, 'Guest 1/1 credentials must unconditionally be rejected with 401');
                 assert.strictEqual(res.body.success, false);
+
+                const cfgRes = await env.request('GET', '/api/public-config');
+                assert.strictEqual(cfgRes.status, 200);
+                assert.strictEqual(cfgRes.body.guestEnabled, false);
+
+                const healthRes = await env.request('GET', '/api/health');
+                assert.strictEqual(healthRes.status, 200);
+                assert.strictEqual(healthRes.body.guestEnabled, false);
             } finally {
                 if (savedGuest !== undefined) process.env.ALLOW_GUEST_LOGIN = savedGuest;
                 else delete process.env.ALLOW_GUEST_LOGIN;
@@ -668,6 +682,8 @@ describe('Security Hardening, Engine Reliability & Backend API Test Suite', () =
             assert.strictEqual(state.status, 'stopped', 'Campaign must be stopped safely when overdue error threshold exceeded');
 
             campaigns.delete(cid);
+            try { fs.unlinkSync(path.join(CAMPAIGNS_DIR, `${cid}.json`)); } catch {}
+            try { fs.unlinkSync(path.join(CAMPAIGNS_DIR, `${cid}.tmp`)); } catch {}
         });
 
         it('atomically checkpoints runtime state to disk', () => {
@@ -700,6 +716,70 @@ describe('Security Hardening, Engine Reliability & Backend API Test Suite', () =
             try { fs.unlinkSync(diskFile); } catch {}
             campaigns.delete(cid);
         });
+
+        it('checkpointCampaignState and saveSessions survive transient Windows EPERM/EBUSY rename locks without orphan .tmp files', () => {
+            const cid = `test_win_retry_${Date.now()}`;
+            const state = createCampaignState(cid, {
+                targetUrl: 'https://traffic-test.example.com/retry',
+                targetClicks: 10,
+                startTime: Date.now(),
+                endTime: Date.now() + 60000,
+                paymentStatus: 'paid'
+            });
+            state.successVisits = 7;
+            campaigns.set(cid, state);
+
+            const sessionToken = `test-retry-sess-${crypto.randomUUID()}`;
+            activeSessions.set(sessionToken, {
+                username: 'admin',
+                role: 'admin',
+                expiresAt: Date.now() + 60000
+            });
+
+            const origRenameSync = fs.renameSync;
+            let campaignRenameCalls = 0;
+            let sessionRenameCalls = 0;
+
+            fs.renameSync = function (oldPath, newPath) {
+                if (String(newPath).endsWith(`${cid}.json`) && campaignRenameCalls === 0) {
+                    campaignRenameCalls++;
+                    const err = new Error('EPERM: transient lock');
+                    err.code = 'EPERM';
+                    throw err;
+                }
+                if (String(newPath) === SESSIONS_FILE && sessionRenameCalls === 0) {
+                    sessionRenameCalls++;
+                    const err = new Error('EBUSY: transient lock');
+                    err.code = 'EBUSY';
+                    throw err;
+                }
+                return origRenameSync.call(fs, oldPath, newPath);
+            };
+
+            const diskFile = path.join(CAMPAIGNS_DIR, `${cid}.json`);
+            try {
+                checkpointCampaignState(cid);
+                assert.strictEqual(campaignRenameCalls, 1, 'Expected retry after EPERM on checkpointCampaignState');
+                assert.ok(fs.existsSync(diskFile), 'Campaign checkpoint file must exist after transient EPERM retry');
+                const savedCamp = JSON.parse(fs.readFileSync(diskFile, 'utf-8'));
+                assert.strictEqual(savedCamp.successVisits, 7);
+
+                saveSessions();
+                assert.strictEqual(sessionRenameCalls, 1, 'Expected retry after EBUSY on saveSessions');
+                const savedSess = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf-8'));
+                assert.ok(savedSess[sessionToken], 'Session token must be persisted atomically after transient EBUSY retry');
+
+                const campaignTmps = fs.readdirSync(CAMPAIGNS_DIR).filter(f => f.includes(cid) && f.endsWith('.tmp'));
+                assert.strictEqual(campaignTmps.length, 0, 'No orphan campaign .tmp files may remain');
+                const rootTmps = fs.readdirSync(ROOT_DIR).filter(f => f.startsWith('sessions.json.') && f.endsWith('.tmp'));
+                assert.strictEqual(rootTmps.length, 0, 'No orphan sessions .tmp files may remain');
+            } finally {
+                fs.renameSync = origRenameSync;
+                activeSessions.delete(sessionToken);
+                campaigns.delete(cid);
+                try { fs.unlinkSync(diskFile); } catch {}
+            }
+        });
     });
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -721,10 +801,69 @@ describe('Security Hardening, Engine Reliability & Backend API Test Suite', () =
             assert.strictEqual(res.status, 200);
             assert.strictEqual(res.body.success, true);
             assert.ok(res.body.pricing && res.body.pricing.clickRate === 40);
-            assert.ok(res.body.dwellPresets && res.body.dwellPresets.standard);
-            assert.ok(Array.isArray(res.body.deviceProfiles));
+            assert.ok(res.body.dwellPresets && res.body.dwellPresets.standard && res.body.dwellPresets.short);
+            assert.ok(Array.isArray(res.body.deviceProfiles) && res.body.deviceProfiles.includes('mixed'));
+            assert.strictEqual(res.body.orderExpireMinutes, 30);
+            assert.strictEqual(res.body.guestEnabled, false, 'guestEnabled must unconditionally be false');
+            assert.strictEqual(res.body.defaultPasswordWarning, false, 'Unauthenticated public-config must never leak password warnings');
             assert.strictEqual(res.body.webhookSecret, undefined, 'webhookSecret must never be exposed');
             assert.strictEqual(res.body.keys, undefined, 'Proxy keys must never be exposed');
+        });
+
+        it('defaultPasswordWarning reflects default admin123456 only for authenticated admin and clears on password change, with #admin-default-pw-banner wired in UI', async () => {
+            const nonAdminCookie = env.seedNonAdminSession();
+
+            await withTempAdminCredentials('admin123456', async (adminUser, defaultPass) => {
+                const unauthRes = await env.request('GET', '/api/public-config');
+                assert.strictEqual(unauthRes.status, 200);
+                assert.strictEqual(unauthRes.body.defaultPasswordWarning, false);
+                assert.strictEqual(unauthRes.body.guestEnabled, false);
+
+                const nonAdminRes = await env.request('GET', '/api/public-config', { cookie: nonAdminCookie });
+                assert.strictEqual(nonAdminRes.status, 200);
+                assert.strictEqual(nonAdminRes.body.defaultPasswordWarning, false);
+                assert.strictEqual(nonAdminRes.body.guestEnabled, false);
+
+                const loginRes = await env.request('POST', '/api/login', {
+                    body: { username: adminUser, password: defaultPass, rememberMe: false }
+                });
+                assert.strictEqual(loginRes.status, 200);
+                assert.ok(loginRes.cookies.session_token, 'Admin login must return session cookie');
+                const adminSessionCookie = `session_token=${loginRes.cookies.session_token}`;
+
+                try {
+                    const warnRes = await env.request('GET', '/api/public-config', { cookie: adminSessionCookie });
+                    assert.strictEqual(warnRes.status, 200);
+                    assert.strictEqual(warnRes.body.authenticated, true);
+                    assert.strictEqual(warnRes.body.role, 'admin');
+                    assert.strictEqual(warnRes.body.guestEnabled, false);
+                    assert.strictEqual(warnRes.body.defaultPasswordWarning, true);
+
+                    const changeRes = await env.request('POST', '/api/change-password', {
+                        cookie: adminSessionCookie,
+                        body: {
+                            currentPassword: defaultPass,
+                            newUsername: adminUser,
+                            newPassword: 'RotatedStrongPassword_2026!'
+                        }
+                    });
+                    assert.strictEqual(changeRes.status, 200);
+                    assert.strictEqual(changeRes.body.success, true);
+
+                    const clearedRes = await env.request('GET', '/api/public-config', { cookie: adminSessionCookie });
+                    assert.strictEqual(clearedRes.status, 200);
+                    assert.strictEqual(clearedRes.body.defaultPasswordWarning, false);
+                    assert.strictEqual(clearedRes.body.guestEnabled, false);
+                } finally {
+                    await env.request('POST', '/api/logout', { cookie: adminSessionCookie }).catch(() => {});
+                }
+            });
+
+            const boostHtml = fs.readFileSync(path.join(ROOT_DIR, 'public', 'boost.html'), 'utf-8');
+            const boostUiJs = fs.readFileSync(path.join(ROOT_DIR, 'public', 'js', 'boost-ui.js'), 'utf-8');
+            assert.match(boostHtml, /id=["']admin-default-pw-banner["']/);
+            assert.match(boostUiJs, /admin-default-pw-banner/);
+            assert.match(boostUiJs, /defaultPasswordWarning\s*!==\s*true/);
         });
 
         it('POST /api/proxy/validate validates proxy key parameter', async () => {
@@ -741,7 +880,7 @@ describe('Security Hardening, Engine Reliability & Backend API Test Suite', () =
             assert.strictEqual(validRes.body.valid, true);
         });
 
-        it('POST /api/orders accepts optional dwellPreset and deviceProfile', async () => {
+        it('POST /api/orders accepts optional dwellPreset and deviceProfile and propagates them to activated campaign', async () => {
             const res = await env.request('POST', '/api/orders', {
                 body: {
                     targetUrl: 'https://traffic-test.example.com/custom-profile',
@@ -755,9 +894,89 @@ describe('Security Hardening, Engine Reliability & Backend API Test Suite', () =
             assert.strictEqual(res.status, 201);
             assert.strictEqual(res.body.dwellPreset, 'deep');
             assert.strictEqual(res.body.deviceProfile, 'mobile');
+            assert.ok(res.body.expiresAt >= res.body.createdAt + 29 * 60 * 1000, 'Order must include ~30m expiresAt');
+
+            const confirmRes = await env.request('POST', `/api/orders/${res.body.orderId}/confirm`, {
+                cookie: env.adminCookie
+            });
+            assert.strictEqual(confirmRes.status, 200);
+            const camp = campaigns.get(confirmRes.body.campaignId);
+            assert.ok(camp, 'Activated campaign must exist');
+            assert.strictEqual(camp.config.dwellMin, 15);
+            assert.strictEqual(camp.config.dwellMax, 30);
+            assert.strictEqual(camp.config.dwellPreset, 'deep');
+            assert.strictEqual(camp.config.deviceProfile, 'mobile');
 
             // Cleanup
-            orderService.deleteOrder(res.body.orderId);
+            await env.request('DELETE', `/api/admin/orders/${res.body.orderId}`, { cookie: env.adminCookie });
+        });
+
+        it('runVisitWorker selects User-Agent matching deviceProfile (mobile vs desktop)', async () => {
+            const seenHeaders = [];
+            const savedGet = axios.get;
+            axios.get = async (url, config = {}) => {
+                if (typeof url === 'string' && url.includes('device-check.example.com')) {
+                    seenHeaders.push(config.headers || {});
+                    return { status: 200, data: '<html><body>ok</body></html>', headers: { 'content-type': 'text/html' } };
+                }
+                return savedGet.call(axios, url, config);
+            };
+
+            const mobileCid = `test_device_mobile_${Date.now()}`;
+            const desktopCid = `test_device_desktop_${Date.now()}`;
+            try {
+                const mobileState = createCampaignState(mobileCid, {
+                    targetUrl: 'https://device-check.example.com/m',
+                    targetClicks: 5,
+                    startTime: Date.now() - 1000,
+                    endTime: Date.now() + 60000,
+                    dwellMin: 1,
+                    dwellMax: 1,
+                    deviceProfile: 'mobile',
+                    randomLinks: false,
+                    paymentStatus: 'paid'
+                });
+                mobileState.status = 'running';
+                campaigns.set(mobileCid, mobileState);
+                await runVisitWorker(mobileCid, {
+                    key: 'dev_mob_key',
+                    currentProxy: { http: '127.0.0.1:8888', realIpAddress: '203.0.113.55' }
+                });
+
+                const desktopState = createCampaignState(desktopCid, {
+                    targetUrl: 'https://device-check.example.com/d',
+                    targetClicks: 5,
+                    startTime: Date.now() - 1000,
+                    endTime: Date.now() + 60000,
+                    dwellMin: 1,
+                    dwellMax: 1,
+                    deviceProfile: 'desktop',
+                    randomLinks: false,
+                    paymentStatus: 'paid'
+                });
+                desktopState.status = 'running';
+                campaigns.set(desktopCid, desktopState);
+                await runVisitWorker(desktopCid, {
+                    key: 'dev_desk_key',
+                    currentProxy: { http: '127.0.0.1:8889', realIpAddress: '203.0.113.56' }
+                });
+
+                assert.strictEqual(seenHeaders.length, 2);
+                assert.match(seenHeaders[0]['User-Agent'], /(Android|iPhone|Mobile)/i, 'mobile profile must send mobile UA');
+                assert.strictEqual(seenHeaders[0]['sec-ch-ua'], undefined, 'mobile profile must omit desktop sec-ch-ua');
+                assert.strictEqual(/(Android|iPhone|Mobile)/i.test(seenHeaders[1]['User-Agent']), false, 'desktop profile must send desktop UA');
+                assert.ok(seenHeaders[1]['sec-ch-ua'], 'desktop profile must include sec-ch-ua');
+            } finally {
+                axios.get = savedGet;
+                campaigns.delete(mobileCid);
+                campaigns.delete(desktopCid);
+                globalProxyPool.delete('dev_mob_key');
+                globalProxyPool.delete('dev_desk_key');
+                for (const cid of [mobileCid, desktopCid]) {
+                    try { fs.unlinkSync(path.join(CAMPAIGNS_DIR, `${cid}.json`)); } catch {}
+                    try { fs.unlinkSync(path.join(CAMPAIGNS_DIR, `${cid}.tmp`)); } catch {}
+                }
+            }
         });
 
         it('Admin Telegram APIs: GET /api/admin/telegram, POST /api/admin/telegram, and POST /api/admin/telegram/test', async () => {

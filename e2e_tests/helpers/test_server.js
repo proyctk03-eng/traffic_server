@@ -16,12 +16,26 @@ function snapshotFile(filePath) {
     return { existed: false, content: null };
 }
 
+const SLEEP_ARR = new Int32Array(new SharedArrayBuffer(4));
+
+function retryFsOp(fn, maxAttempts = 12, delayMs = 40) {
+    for (let attempt = 1; ; attempt++) {
+        try {
+            return fn();
+        } catch (err) {
+            const transient = err && (err.code === 'EBUSY' || err.code === 'EPERM' || err.code === 'EACCES');
+            if (!transient || attempt >= maxAttempts) throw err;
+            Atomics.wait(SLEEP_ARR, 0, 0, delayMs);
+        }
+    }
+}
+
 function restoreFile(filePath, snapshot) {
     if (!snapshot) return;
     if (snapshot.existed) {
-        fs.writeFileSync(filePath, snapshot.content);
+        retryFsOp(() => fs.writeFileSync(filePath, snapshot.content));
     } else if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
+        retryFsOp(() => fs.unlinkSync(filePath));
     }
 }
 
@@ -147,6 +161,8 @@ class TestServer {
             ...process.env,
             PORT: String(this.port),
             NODE_ENV: 'test',
+            ALLOW_PRIVATE_TARGET_URLS: 'true',
+            RATE_LIMIT_DISABLED: 'true',
             ...(this.options.env || {})
         };
 

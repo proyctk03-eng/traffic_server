@@ -197,6 +197,15 @@ describe('Challenger 1: Empirical Security & Resilience Stress Suite', () => {
 
         after(() => {
             if (targetServer) targetServer.close();
+            const fs = require('node:fs');
+            const path = require('node:path');
+            for (const cid of ['challenger_camp_dead_proxy', 'challenger_camp_502_proxy', 'challenger_camp_null_proxy']) {
+                try { server.campaigns.delete(cid); } catch {}
+                for (const ext of ['.json', '.tmp']) {
+                    const p = path.join(__dirname, '..', 'campaigns', `${cid}${ext}`);
+                    try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch {}
+                }
+            }
         });
 
         it('guarantees ZERO direct requests to target server when proxy fails with ECONNREFUSED', async () => {
@@ -339,16 +348,21 @@ describe('Challenger 1: Empirical Security & Resilience Stress Suite', () => {
             if (server.server) server.server.close();
         });
 
-        it('strictly rejects guest 1/1 login with HTTP 401 when ALLOW_GUEST_LOGIN=false', async () => {
+        it('unconditionally rejects guest 1/1 login with HTTP 401 and keeps guestEnabled=false', async () => {
             const saved = process.env.ALLOW_GUEST_LOGIN;
             try {
-                process.env.ALLOW_GUEST_LOGIN = 'false';
+                // Even if legacy ALLOW_GUEST_LOGIN env var is set, 1/1 must remain strictly rejected
+                process.env.ALLOW_GUEST_LOGIN = 'true';
                 const res = await axiosClient.post('/api/login', {
                     username: '1',
                     password: '1'
                 });
-                assert.strictEqual(res.status, 401, 'Guest 1/1 login must be rejected with 401');
+                assert.strictEqual(res.status, 401, 'Guest 1/1 login must unconditionally be rejected with 401');
                 assert.strictEqual(res.data.success, false);
+
+                const cfg = await axiosClient.get('/api/public-config');
+                assert.strictEqual(cfg.status, 200);
+                assert.strictEqual(cfg.data.guestEnabled, false);
             } finally {
                 if (saved !== undefined) process.env.ALLOW_GUEST_LOGIN = saved;
                 else delete process.env.ALLOW_GUEST_LOGIN;

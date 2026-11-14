@@ -127,8 +127,8 @@ class TestContext {
 
         if (this._initialCampaignFiles && fs.existsSync(this._campaignsDir)) {
             for (const file of fs.readdirSync(this._campaignsDir)) {
-                if (!file.endsWith('.json')) continue;
-                const campaignId = file.slice(0, -5);
+                if (!file.endsWith('.json') && !file.endsWith('.tmp')) continue;
+                const campaignId = file.replace(/\.(json|tmp)$/, '');
                 if (!this._initialCampaignFiles.has(file) || this.createdCampaignIds.has(campaignId)) {
                     try { fs.unlinkSync(path.join(this._campaignsDir, file)); } catch {}
                 }

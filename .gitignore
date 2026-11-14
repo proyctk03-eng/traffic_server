@@ -8,6 +8,7 @@ sessions.json
 telegram_config.json
 proxy_config.json
 payment_config.json
+webhook_txids.json
 .env
 .env.*
 !.env.example
@@ -15,6 +16,8 @@ payment_config.json
 # Runtime generated data
 orders/
 campaigns/
+*_state.json
+*.tmp
 
 # Logs & OS files
 *.log

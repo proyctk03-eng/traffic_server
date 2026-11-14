@@ -575,10 +575,14 @@ describe('Milestone 1: Commercial Order & Pricing Engine Test Suite', () => {
             assert.strictEqual(unauthRes.status, 403);
             assert.strictEqual(unauthRes.body.success, false);
 
-            const guestCookie = await env.loginAsGuest();
-            const guestRes = await makeRequest('POST', `/api/orders/${sharedOrderId}/confirm`, null, { cookie: guestCookie });
-            assert.strictEqual(guestRes.status, 403);
-            assert.strictEqual(guestRes.body.success, false);
+            const legacyLoginRes = await makeRequest('POST', '/api/login', { username: '1', password: '1' });
+            assert.strictEqual(legacyLoginRes.status, 401);
+            assert.strictEqual(legacyLoginRes.body.success, false);
+
+            const nonAdminCookie = env.seedNonAdminSession();
+            const nonAdminRes = await makeRequest('POST', `/api/orders/${sharedOrderId}/confirm`, null, { cookie: nonAdminCookie });
+            assert.strictEqual(nonAdminRes.status, 403);
+            assert.strictEqual(nonAdminRes.body.success, false);
 
             const unchanged = orderService.getOrder(sharedOrderId);
             assert.strictEqual(unchanged.status, 'pending_payment');

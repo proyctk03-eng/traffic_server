@@ -113,13 +113,18 @@
         return trimmed.length > 4 ? `...${trimmed.slice(-4)}` : '****';
     }
 
+    const DWELL_ALIASES = { quick: 'short', standard: 'medium', deep: 'long' };
+    const DEVICE_ALIASES = { balanced: 'mixed' };
+
     function normalizeDwellPreset(val) {
-        const key = String(val || '').trim().toLowerCase();
+        const raw = String(val || '').trim().toLowerCase();
+        const key = DWELL_ALIASES[raw] || raw;
         return Object.prototype.hasOwnProperty.call(DWELL_PRESETS, key) ? key : 'short';
     }
 
     function normalizeDeviceProfile(val) {
-        const key = String(val || '').trim().toLowerCase();
+        const raw = String(val || '').trim().toLowerCase();
+        const key = DEVICE_ALIASES[raw] || raw;
         return Object.prototype.hasOwnProperty.call(DEVICE_PROFILES, key) ? key : 'mixed';
     }
 

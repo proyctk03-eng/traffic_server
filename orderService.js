@@ -20,6 +20,20 @@ const CLICK_RATE = 40;
 const HOURLY_RATE = 2000;
 const DEFAULT_TEMPLATE = 'compact2';
 const ORDER_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const DWELL_PRESET_BOUNDS = {
+    short: { min: 2, max: 5 },
+    quick: { min: 2, max: 5 },
+    medium: { min: 5, max: 10 },
+    standard: { min: 5, max: 15 },
+    long: { min: 10, max: 20 },
+    deep: { min: 15, max: 30 }
+};
+const VALID_DEVICE_PROFILES = new Set(['mixed', 'mobile', 'desktop', 'balanced']);
+
+function resolveDwellBounds(preset) {
+    const key = typeof preset === 'string' ? preset.trim().toLowerCase() : '';
+    return DWELL_PRESET_BOUNDS[key] || DWELL_PRESET_BOUNDS.short;
+}
 
 function isPrivateTargetAllowed() {
     if (process.env.ALLOW_PRIVATE_TARGET_URLS === 'false') return false;
@@ -232,12 +246,14 @@ function validateOrderParams(params) {
     }
     const dedupIp = params.dedupIp !== false && params.dedupIp !== 'false';
     const randomLinks = params.randomLinks !== false && params.randomLinks !== 'false';
-    const dwellPreset = typeof params.dwellPreset === 'string' && params.dwellPreset.trim()
-        ? params.dwellPreset.trim()
-        : 'standard';
-    const deviceProfile = typeof params.deviceProfile === 'string' && params.deviceProfile.trim()
-        ? params.deviceProfile.trim()
-        : 'balanced';
+    const rawDwellPreset = typeof params.dwellPreset === 'string' ? params.dwellPreset.trim().toLowerCase() : '';
+    const dwellPreset = Object.prototype.hasOwnProperty.call(DWELL_PRESET_BOUNDS, rawDwellPreset)
+        ? rawDwellPreset
+        : 'short';
+    const rawDeviceProfile = typeof params.deviceProfile === 'string' ? params.deviceProfile.trim().toLowerCase() : '';
+    const deviceProfile = VALID_DEVICE_PROFILES.has(rawDeviceProfile)
+        ? rawDeviceProfile
+        : 'mixed';
 
     const isValid = errors.length === 0;
     return {
@@ -345,6 +361,9 @@ function sanitizeOrderId(orderId) {
 
 function checkOrderExpiration(order) {
     if (!order || typeof order !== 'object') return order;
+    if (!order.expiresAt && typeof order.createdAt === 'number') {
+        order.expiresAt = order.createdAt + ORDER_TTL_MS;
+    }
     if (order.status === 'pending_payment' && (Date.now() - (order.createdAt || 0)) > ORDER_TTL_MS) {
         order.status = 'expired';
         order.paymentStatus = 'expired';
@@ -420,6 +439,7 @@ function createOrder(data) {
     const orderCode = generateOrderCode();
     const vietQrUrl = generateVietQrUrl(bankInfo, pricing.totalAmount, orderCode);
 
+    const now = Date.now();
     const order = {
         orderId,
         orderCode,
@@ -438,16 +458,17 @@ function createOrder(data) {
         customBlocks: sanitized.customBlocks || null,
         dedupIp: sanitized.dedupIp !== false,
         randomLinks: sanitized.randomLinks !== false,
-        dwellPreset: sanitized.dwellPreset || 'standard',
-        deviceProfile: sanitized.deviceProfile || 'balanced',
+        dwellPreset: sanitized.dwellPreset || 'short',
+        deviceProfile: sanitized.deviceProfile || 'mixed',
         vietQrUrl,
         bankInfo,
         status: 'pending_payment',
         paymentStatus: 'pending_payment',
         campaignId: null,
-        createdAt: Date.now(),
+        createdAt: now,
+        expiresAt: now + ORDER_TTL_MS,
         paidAt: null,
-        updatedAt: Date.now()
+        updatedAt: now
     };
 
     const filePath = path.join(ORDERS_DIR, `${orderId}.json`);
@@ -530,6 +551,8 @@ module.exports = {
     checkOrderExpiration,
     isPrivateTargetAllowed,
     isLexicallyPrivateHost,
+    resolveDwellBounds,
+    DWELL_PRESET_BOUNDS,
     ORDER_TTL_MS,
     CONSTANTS: {
         CLICK_RATE,

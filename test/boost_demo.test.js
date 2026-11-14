@@ -105,26 +105,34 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
         }
     });
 
-    it('Static HTML/JS consistency: every $() DOM ID in public/js/boost.js exists in public/boost.html and no signup forms exist', () => {
+    it('Static HTML/JS consistency: every $() DOM ID across modular boost scripts exists in public/boost.html and no signup forms exist', () => {
         const html = fs.readFileSync(path.join(ROOT_DIR, 'public', 'boost.html'), 'utf-8');
-        const js = fs.readFileSync(path.join(ROOT_DIR, 'public', 'js', 'boost.js'), 'utf-8');
+        const boostScripts = ['boost-shared.js', 'boost-demo.js', 'boost-ui.js', 'boost.js'];
+        const combinedJs = boostScripts
+            .map(name => fs.readFileSync(path.join(ROOT_DIR, 'public', 'js', name), 'utf-8'))
+            .join('\n');
         const loginHtml = fs.readFileSync(path.join(ROOT_DIR, 'public', 'login.html'), 'utf-8');
         const indexHtml = fs.readFileSync(path.join(ROOT_DIR, 'public', 'index.html'), 'utf-8');
         const orderHtml = fs.readFileSync(path.join(ROOT_DIR, 'public', 'order.html'), 'utf-8');
         const trackHtml = fs.readFileSync(path.join(ROOT_DIR, 'public', 'track.html'), 'utf-8');
 
-        const idMatches = [...js.matchAll(/\$\(\s*['"]([a-zA-Z0-9_-]+)['"]\s*\)/g)].map(m => m[1]);
-        const uniqueIds = [...new Set(idMatches)];
-        assert.ok(uniqueIds.length > 20, 'Expected DOM IDs in boost.js');
-        for (const id of uniqueIds) {
-            assert.ok(
-                html.includes(`id="${id}"`),
-                `Missing element id="${id}" in public/boost.html (referenced in public/js/boost.js)`
-            );
+        let totalIds = 0;
+        for (const scriptName of boostScripts) {
+            const scriptSrc = fs.readFileSync(path.join(ROOT_DIR, 'public', 'js', scriptName), 'utf-8');
+            const idMatches = [...scriptSrc.matchAll(/\$\(\s*['"]([a-zA-Z0-9_-]+)['"]\s*\)/g)].map(m => m[1]);
+            const uniqueIds = [...new Set(idMatches)];
+            totalIds += uniqueIds.length;
+            for (const id of uniqueIds) {
+                assert.ok(
+                    html.includes(`id="${id}"`),
+                    `Missing element id="${id}" in public/boost.html (referenced in public/js/${scriptName})`
+                );
+            }
         }
+        assert.ok(totalIds > 50, 'Expected DOM IDs across boost modular JS files');
 
         // No customer registration / signup endpoint anywhere on /boost
-        assert.ok(!/\/api\/register|\/api\/signup/i.test(html + js), 'Must not include customer account registration endpoints');
+        assert.ok(!/\/api\/register|\/api\/signup/i.test(html + combinedJs), 'Must not include customer account registration endpoints');
         assert.ok(loginHtml.includes('/boost'), 'login.html must link to /boost');
         assert.ok(indexHtml.includes('/boost'), 'index.html must link to /boost');
         assert.ok(orderHtml.includes('/boost'), 'order.html must link to /boost');
@@ -209,15 +217,24 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
         }
     });
 
-    it('Public access without creating an account: /boost, /boost/, /js/boost.js, /js/timeDistribution.js work; / still redirects to /login.html', async () => {
+    it('Public access without creating an account: /boost, /boost/, all boost modular scripts & /js/timeDistribution.js work; / still redirects to /login.html', async () => {
         const boostPage = await env.request('GET', '/boost');
         assert.equal(boostPage.status, 200);
+        assert.ok(boostPage.raw.includes('/js/boost-shared.js'));
+        assert.ok(boostPage.raw.includes('/js/boost-demo.js'));
+        assert.ok(boostPage.raw.includes('/js/boost-ui.js'));
         assert.ok(boostPage.raw.includes('/js/boost.js'));
         assert.ok(boostPage.raw.includes('/js/timeDistribution.js'));
 
         const boostSlash = await env.request('GET', '/boost/');
         assert.equal(boostSlash.status, 200);
         assert.ok(boostSlash.raw.includes('/js/boost.js'));
+
+        for (const scriptPath of ['/js/boost-shared.js', '/js/boost-demo.js', '/js/boost-ui.js']) {
+            const scriptRes = await env.request('GET', scriptPath);
+            assert.equal(scriptRes.status, 200, `${scriptPath} must be publicly accessible without auth redirect`);
+            assert.ok(!scriptRes.raw.includes('<!DOCTYPE html>'), `${scriptPath} must return JS, not HTML redirect`);
+        }
 
         const boostJs = await env.request('GET', '/js/boost.js');
         assert.equal(boostJs.status, 200);
@@ -232,7 +249,7 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
         assert.equal(rootRes.headers.location, '/login.html');
     });
 
-    it('/api/public-config exposes safe platform metadata & reflects single-account auth roles without leaking webhookSecret', async () => {
+    it('/api/public-config exposes safe platform metadata & single-admin-only mode rejects legacy 1/1 without leaking secrets', async () => {
         const unauthRes = await env.request('GET', '/api/public-config');
         assert.equal(unauthRes.status, 200);
         assert.equal(unauthRes.body.success, true);
@@ -240,24 +257,36 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
         assert.equal(unauthRes.body.role, null);
         assert.equal(unauthRes.body.singleAccountMode, true);
         assert.equal(unauthRes.body.browserMode, 'request');
+        assert.equal(unauthRes.body.orderExpireMinutes, 30);
+        assert.equal(unauthRes.body.defaultPasswordWarning, false);
+        assert.ok(unauthRes.body.dwellPresets && unauthRes.body.dwellPresets.short && unauthRes.body.dwellPresets.standard);
+        assert.ok(Array.isArray(unauthRes.body.deviceProfiles) && unauthRes.body.deviceProfiles.includes('mixed'));
         assert.deepEqual(unauthRes.body.pricing, { clickRate: 40, hourlyRate: 2000, currency: 'VND' });
         assert.ok(unauthRes.body.bankInfo);
         assert.equal(unauthRes.body.bankInfo.webhookSecret, undefined);
 
-        const guestCookie = await env.loginAsGuest();
-        const guestRes = await env.request('GET', '/api/public-config', { cookie: guestCookie });
-        assert.equal(guestRes.status, 200);
-        assert.equal(guestRes.body.authenticated, true);
-        assert.equal(guestRes.body.role, 'guest');
+        // Single-admin-only mode unconditionally rejects legacy 1/1 guest credentials with 401 and sets guestEnabled=false
+        assert.equal(unauthRes.body.guestEnabled, false);
+
+        const healthRes = await env.request('GET', '/api/health');
+        assert.equal(healthRes.status, 200);
+        assert.equal(healthRes.body.guestEnabled, false);
+
+        const rejectedGuestLogin = await env.request('POST', '/api/login', {
+            body: { username: '1', password: '1' }
+        });
+        assert.equal(rejectedGuestLogin.status, 401);
+        assert.equal(rejectedGuestLogin.body.success, false);
 
         const adminRes = await env.request('GET', '/api/public-config', { cookie: env.adminCookie });
         assert.equal(adminRes.status, 200);
         assert.equal(adminRes.body.authenticated, true);
         assert.equal(adminRes.body.role, 'admin');
+        assert.equal(adminRes.body.guestEnabled, false);
         assert.equal(adminRes.body.username, env.adminUsername);
     });
 
-    it('Guest / unauthenticated customers cannot confirm payment or access single-account admin endpoints', async () => {
+    it('Non-admin / unauthenticated callers cannot confirm payment or access single-account admin endpoints', async () => {
         const createRes = await env.request('POST', '/api/orders', {
             body: {
                 targetUrl: `http://127.0.0.1:${targetPort}/unpaid`,
@@ -269,18 +298,18 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
         assert.equal(createRes.status, 201);
         const orderId = createRes.body.orderId;
 
-        const guestCookie = await env.loginAsGuest();
+        const nonAdminCookie = env.seedNonAdminSession();
         const unauthConfirm = await env.request('POST', `/api/orders/${orderId}/confirm`);
         assert.equal(unauthConfirm.status, 403);
 
-        const guestConfirm = await env.request('POST', `/api/orders/${orderId}/confirm`, { cookie: guestCookie });
-        assert.equal(guestConfirm.status, 403);
+        const nonAdminConfirm = await env.request('POST', `/api/orders/${orderId}/confirm`, { cookie: nonAdminCookie });
+        assert.equal(nonAdminConfirm.status, 403);
 
         const unauthAdminOrders = await env.request('GET', '/api/admin/orders');
         assert.equal(unauthAdminOrders.status, 401);
 
-        const guestAdminOrders = await env.request('GET', '/api/admin/orders', { cookie: guestCookie });
-        assert.equal(guestAdminOrders.status, 403);
+        const nonAdminOrders = await env.request('GET', '/api/admin/orders', { cookie: nonAdminCookie });
+        assert.equal(nonAdminOrders.status, 403);
 
         await new Promise(r => setTimeout(r, 300));
         assert.equal(targetHits.filter(h => h.url === '/unpaid').length, 0, 'Unpaid order must record 0 hits');
@@ -537,6 +566,7 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
         const pageErrors = [];
         const badResponses = [];
         let allowIntentional404 = false;
+        let allowIntentional401 = false;
         const PNG_1X1 = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
 
         try {
@@ -550,6 +580,7 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
             page.on('console', (msg) => {
                 if (msg.type() === 'error') {
                     if (allowIntentional404 && msg.text().includes('status of 404')) return;
+                    if (allowIntentional401 && msg.text().includes('status of 401')) return;
                     consoleErrors.push(msg.text());
                 }
             });
@@ -557,6 +588,7 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
             page.on('response', (res) => {
                 if (res.status() >= 400) {
                     if (allowIntentional404 && res.status() === 404 && res.url().endsWith('/api/orders/ORD-DOES-NOT-EXIST')) return;
+                    if (allowIntentional401 && res.status() === 401 && res.url().endsWith('/api/login')) return;
                     badResponses.push(`${res.status()} ${res.url()}`);
                 }
             });
@@ -717,15 +749,30 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
             assert.equal((await page.textContent('#lookup-order-msg')).trim(), '');
             assert.equal((await page.textContent('#ao-id')).trim(), createdOrderId);
 
-            // Test legacy read-only guest (1/1) in modal -> read-only warning, then logout
-            await page.click('#open-login-btn');
-            await page.fill('#login-user', '1');
-            await page.fill('#login-pass', '1');
-            await page.click('#submit-login-btn');
-            await page.waitForFunction(() => document.getElementById('auth-pill')?.textContent?.includes('Guest'));
-            assert.equal(await page.isVisible('#inline-admin-confirm-btn'), false);
-            await page.click('#logout-btn');
-            await page.waitForFunction(() => document.getElementById('auth-pill')?.textContent?.includes('Khách'));
+            // Verify single-admin-only mode + UI unconditionally reject legacy guest (1/1) with 401 in modal, then close cleanly
+            assert.equal(await page.isHidden('#admin-default-pw-banner'), true, 'Unauthenticated users must never see default password banner');
+            allowIntentional401 = true;
+            try {
+                await page.click('#open-login-btn');
+                await page.fill('#login-user', '1');
+                await page.fill('#login-pass', '1');
+                const [loginResp] = await Promise.all([
+                    page.waitForResponse(r => r.url().endsWith('/api/login') && r.request().method() === 'POST'),
+                    page.click('#submit-login-btn')
+                ]);
+                assert.equal(loginResp.status(), 401, 'Server must unconditionally reject 1/1 modal login with 401');
+                await page.waitForFunction(() => {
+                    const msg = document.getElementById('login-modal-msg')?.textContent || '';
+                    return msg.trim().length > 0;
+                });
+                assert.ok((await page.textContent('#auth-pill')).includes('Khách'));
+                assert.equal(await page.isVisible('#logout-btn'), false);
+                assert.equal(await page.isVisible('#inline-admin-confirm-btn'), false);
+                await page.click('#close-login-btn');
+                await page.waitForFunction(() => !document.getElementById('login-modal')?.classList.contains('open'));
+            } finally {
+                allowIntentional401 = false;
+            }
 
             // Log in as single admin via modal WITHOUT reloading the page
             await withTempAdminCredentials('PwDemoSecret_999', async (adminUser, adminPass) => {
@@ -735,6 +782,7 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
                 await page.click('#submit-login-btn');
                 await page.waitForFunction(() => document.getElementById('auth-pill')?.textContent?.includes('Admin:'));
             });
+            assert.equal(await page.isHidden('#admin-default-pw-banner'), true, 'Non-default password must keep #admin-default-pw-banner hidden');
 
             // Inline admin confirm button appears dynamically on active order without page refresh
             await page.waitForSelector('#inline-admin-confirm-btn:not(.hidden)');
@@ -776,6 +824,20 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
             await page.waitForFunction(() => document.getElementById('auth-pill')?.textContent?.includes('Khách'));
             assert.equal((await page.textContent('#adm-sum-total')).trim(), '0');
             assert.match(await page.textContent('#adm-orders-body'), /Chưa có đơn hàng nào/);
+
+            // Default password banner (#admin-default-pw-banner) shows only when authenticated admin uses admin123456
+            await withTempAdminCredentials('admin123456', async (adminUser, defaultPass) => {
+                await page.click('#open-login-btn');
+                await page.fill('#login-user', adminUser);
+                await page.fill('#login-pass', defaultPass);
+                await page.click('#submit-login-btn');
+                await page.waitForFunction(() => document.getElementById('auth-pill')?.textContent?.includes('Admin:'));
+                await page.waitForSelector('#admin-default-pw-banner:not(.hidden)');
+            });
+            await page.click('#logout-btn');
+            await page.waitForFunction(() => document.getElementById('auth-pill')?.textContent?.includes('Khách'));
+            await page.waitForFunction(() => document.getElementById('admin-default-pw-banner')?.classList.contains('hidden'));
+            assert.equal(await page.isHidden('#admin-default-pw-banner'), true);
 
             assert.deepEqual(badResponses, [], `Unexpected HTTP >= 400 responses: ${badResponses.join('; ')}`);
             assert.deepEqual(pageErrors, [], `Unexpected uncaught page errors: ${pageErrors.join('; ')}`);
