@@ -161,6 +161,7 @@ class TestServer {
             ...process.env,
             PORT: String(this.port),
             NODE_ENV: 'test',
+            REQUIRE_AUTH: process.env.REQUIRE_AUTH || 'true',
             ALLOW_PRIVATE_TARGET_URLS: 'true',
             RATE_LIMIT_DISABLED: 'true',
             ...(this.options.env || {})

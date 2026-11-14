@@ -217,7 +217,39 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
         }
     });
 
-    it('Public access without creating an account: /boost, /boost/, all boost modular scripts & /js/timeDistribution.js work; / still redirects to /login.html', async () => {
+    it('BoostShared.buildTrackOrderUrl sets mode=demo and strips stale backend query param in demo mode', () => {
+        const vm = require('node:vm');
+        const distSrc = fs.readFileSync(path.join(ROOT_DIR, 'public', 'js', 'timeDistribution.js'), 'utf-8');
+        const sharedSrc = fs.readFileSync(path.join(ROOT_DIR, 'public', 'js', 'boost-shared.js'), 'utf-8');
+        const sandbox = {
+            window: {
+                location: {
+                    href: 'http://127.0.0.1:3005/boost?backend=https%3A%2F%2Fstale.trycloudflare.com',
+                    origin: 'http://127.0.0.1:3005',
+                    hostname: '127.0.0.1'
+                }
+            },
+            URL,
+            document: null
+        };
+        sandbox.window.window = sandbox.window;
+        vm.runInNewContext(distSrc + '\n' + sharedSrc, sandbox);
+        const S = sandbox.window.BoostShared;
+
+        const demoTrack = S.buildTrackOrderUrl('ORD-DEMO-123', 'demo');
+        const parsedDemo = new URL(demoTrack);
+        assert.equal(parsedDemo.searchParams.get('mode'), 'demo');
+        assert.equal(parsedDemo.searchParams.get('orderId'), 'ORD-DEMO-123');
+        assert.equal(parsedDemo.searchParams.has('backend'), false);
+
+        const sameOriginTrack = S.buildTrackOrderUrl('ORD-LIVE-456', 'same-origin');
+        assert.equal(sameOriginTrack, 'http://127.0.0.1:3005/track.html?orderId=ORD-LIVE-456');
+
+        const remoteTrack = S.buildTrackOrderUrl('ORD-TUN-789', 'remote', 'https://my-tunnel.trycloudflare.com');
+        assert.equal(remoteTrack, 'https://my-tunnel.trycloudflare.com/track.html?orderId=ORD-TUN-789');
+    });
+
+    it('Default Open-Access mode: GET / returns 200 directly; /boost, /boost/, modular scripts & /js/timeDistribution.js work; REQUIRE_AUTH=true redirects / -> /login.html', async () => {
         const boostPage = await env.request('GET', '/boost');
         assert.equal(boostPage.status, 200);
         assert.ok(boostPage.raw.includes('/js/boost-shared.js'));
@@ -244,29 +276,46 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
         assert.equal(distJs.status, 200);
         assert.ok(distJs.raw.includes('buildTimeDistribution'));
 
-        const rootRes = await env.request('GET', '/');
-        assert.equal(rootRes.status, 302);
-        assert.equal(rootRes.headers.location, '/login.html');
+        // Default open-access mode: GET / serves dashboard directly (200) & /login.html redirects to /
+        const openRootRes = await env.request('GET', '/');
+        assert.equal(openRootRes.status, 200);
+        assert.match(String(openRootRes.headers['content-type'] || ''), /text\/html/i);
+
+        const openLoginRes = await env.request('GET', '/login.html');
+        assert.equal(openLoginRes.status, 302);
+        assert.equal(openLoginRes.headers.location, '/');
+
+        // Explicit REQUIRE_AUTH=true flag enforces redirect / -> /login.html
+        const savedRequireAuth = process.env.REQUIRE_AUTH;
+        process.env.REQUIRE_AUTH = 'true';
+        try {
+            const rootRes = await env.request('GET', '/');
+            assert.equal(rootRes.status, 302);
+            assert.equal(rootRes.headers.location, '/login.html');
+        } finally {
+            if (savedRequireAuth !== undefined) process.env.REQUIRE_AUTH = savedRequireAuth;
+            else delete process.env.REQUIRE_AUTH;
+        }
     });
 
-    it('/api/public-config exposes safe platform metadata & single-admin-only mode rejects legacy 1/1 without leaking secrets', async () => {
-        const unauthRes = await env.request('GET', '/api/public-config');
-        assert.equal(unauthRes.status, 200);
-        assert.equal(unauthRes.body.success, true);
-        assert.equal(unauthRes.body.authenticated, false);
-        assert.equal(unauthRes.body.role, null);
-        assert.equal(unauthRes.body.singleAccountMode, true);
-        assert.equal(unauthRes.body.browserMode, 'request');
-        assert.equal(unauthRes.body.orderExpireMinutes, 30);
-        assert.equal(unauthRes.body.defaultPasswordWarning, false);
-        assert.ok(unauthRes.body.dwellPresets && unauthRes.body.dwellPresets.short && unauthRes.body.dwellPresets.standard);
-        assert.ok(Array.isArray(unauthRes.body.deviceProfiles) && unauthRes.body.deviceProfiles.includes('mixed'));
-        assert.deepEqual(unauthRes.body.pricing, { clickRate: 40, hourlyRate: 2000, currency: 'VND' });
-        assert.ok(unauthRes.body.bankInfo);
-        assert.equal(unauthRes.body.bankInfo.webhookSecret, undefined);
-
-        // Single-admin-only mode unconditionally rejects legacy 1/1 guest credentials with 401 and sets guestEnabled=false
-        assert.equal(unauthRes.body.guestEnabled, false);
+    it('/api/public-config defaults to authRequired=false open-access and enforces single-admin metadata & REQUIRE_AUTH=true RBAC without leaking secrets', async () => {
+        // Default open-access mode
+        const openCfgRes = await env.request('GET', '/api/public-config');
+        assert.equal(openCfgRes.status, 200);
+        assert.equal(openCfgRes.body.success, true);
+        assert.equal(openCfgRes.body.authRequired, false);
+        assert.equal(openCfgRes.body.authenticated, true);
+        assert.equal(openCfgRes.body.role, 'admin');
+        assert.equal(openCfgRes.body.singleAccountMode, true);
+        assert.equal(openCfgRes.body.browserMode, 'request');
+        assert.equal(openCfgRes.body.orderExpireMinutes, 30);
+        assert.equal(openCfgRes.body.defaultPasswordWarning, false);
+        assert.equal(openCfgRes.body.guestEnabled, false);
+        assert.ok(openCfgRes.body.dwellPresets && openCfgRes.body.dwellPresets.short && openCfgRes.body.dwellPresets.standard);
+        assert.ok(Array.isArray(openCfgRes.body.deviceProfiles) && openCfgRes.body.deviceProfiles.includes('mixed'));
+        assert.deepEqual(openCfgRes.body.pricing, { clickRate: 40, hourlyRate: 2000, currency: 'VND' });
+        assert.ok(openCfgRes.body.bankInfo);
+        assert.equal(openCfgRes.body.bankInfo.webhookSecret, undefined);
 
         const healthRes = await env.request('GET', '/api/health');
         assert.equal(healthRes.status, 200);
@@ -278,15 +327,32 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
         assert.equal(rejectedGuestLogin.status, 401);
         assert.equal(rejectedGuestLogin.body.success, false);
 
-        const adminRes = await env.request('GET', '/api/public-config', { cookie: env.adminCookie });
-        assert.equal(adminRes.status, 200);
-        assert.equal(adminRes.body.authenticated, true);
-        assert.equal(adminRes.body.role, 'admin');
-        assert.equal(adminRes.body.guestEnabled, false);
-        assert.equal(adminRes.body.username, env.adminUsername);
+        // Explicit REQUIRE_AUTH=true RBAC check
+        const savedRequireAuth = process.env.REQUIRE_AUTH;
+        process.env.REQUIRE_AUTH = 'true';
+        try {
+            const unauthRes = await env.request('GET', '/api/public-config');
+            assert.equal(unauthRes.status, 200);
+            assert.equal(unauthRes.body.authRequired, true);
+            assert.equal(unauthRes.body.authenticated, false);
+            assert.equal(unauthRes.body.role, null);
+            assert.equal(unauthRes.body.defaultPasswordWarning, false);
+            assert.equal(unauthRes.body.guestEnabled, false);
+
+            const adminRes = await env.request('GET', '/api/public-config', { cookie: env.adminCookie });
+            assert.equal(adminRes.status, 200);
+            assert.equal(adminRes.body.authRequired, true);
+            assert.equal(adminRes.body.authenticated, true);
+            assert.equal(adminRes.body.role, 'admin');
+            assert.equal(adminRes.body.guestEnabled, false);
+            assert.equal(adminRes.body.username, env.adminUsername);
+        } finally {
+            if (savedRequireAuth !== undefined) process.env.REQUIRE_AUTH = savedRequireAuth;
+            else delete process.env.REQUIRE_AUTH;
+        }
     });
 
-    it('Non-admin / unauthenticated callers cannot confirm payment or access single-account admin endpoints', async () => {
+    it('Strict payment gating in default Open-Access mode (0 clicks before confirm) & REQUIRE_AUTH=true RBAC denial for non-admin/unauth callers', async () => {
         const createRes = await env.request('POST', '/api/orders', {
             body: {
                 targetUrl: `http://127.0.0.1:${targetPort}/unpaid`,
@@ -297,22 +363,42 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
         });
         assert.equal(createRes.status, 201);
         const orderId = createRes.body.orderId;
+        env.trackOrder(orderId);
+        env.trackProxyKey('K_UNPAID_BOOST_TEST_KEY');
 
+        // Wait briefly in default open-access mode: pending_payment order must remain strictly locked (0 hits, no campaignId)
+        await new Promise(r => setTimeout(r, 350));
+        const unpaidCheck = await env.request('GET', `/api/orders/${orderId}`);
+        assert.equal(unpaidCheck.status, 200);
+        assert.equal(unpaidCheck.body.order.status, 'pending_payment');
+        assert.equal(unpaidCheck.body.order.paymentStatus, 'pending_payment');
+        assert.equal(unpaidCheck.body.order.campaignId, null);
+        assert.equal(targetHits.filter(h => h.url === '/unpaid').length, 0, 'Unpaid order in open-access mode must record strictly 0 hits');
+
+        // Explicit non-admin session is still denied even in default open-access mode
         const nonAdminCookie = env.seedNonAdminSession();
-        const unauthConfirm = await env.request('POST', `/api/orders/${orderId}/confirm`);
-        assert.equal(unauthConfirm.status, 403);
-
         const nonAdminConfirm = await env.request('POST', `/api/orders/${orderId}/confirm`, { cookie: nonAdminCookie });
         assert.equal(nonAdminConfirm.status, 403);
-
-        const unauthAdminOrders = await env.request('GET', '/api/admin/orders');
-        assert.equal(unauthAdminOrders.status, 401);
 
         const nonAdminOrders = await env.request('GET', '/api/admin/orders', { cookie: nonAdminCookie });
         assert.equal(nonAdminOrders.status, 403);
 
-        await new Promise(r => setTimeout(r, 300));
-        assert.equal(targetHits.filter(h => h.url === '/unpaid').length, 0, 'Unpaid order must record 0 hits');
+        // When REQUIRE_AUTH=true, unauthenticated callers cannot confirm or access admin endpoints
+        const savedRequireAuth = process.env.REQUIRE_AUTH;
+        process.env.REQUIRE_AUTH = 'true';
+        try {
+            const unauthConfirm = await env.request('POST', `/api/orders/${orderId}/confirm`);
+            assert.equal(unauthConfirm.status, 403);
+
+            const unauthAdminOrders = await env.request('GET', '/api/admin/orders');
+            assert.equal(unauthAdminOrders.status, 401);
+        } finally {
+            if (savedRequireAuth !== undefined) process.env.REQUIRE_AUTH = savedRequireAuth;
+            else delete process.env.REQUIRE_AUTH;
+        }
+
+        await new Promise(r => setTimeout(r, 250));
+        assert.equal(targetHits.filter(h => h.url === '/unpaid').length, 0, 'Unpaid order must still record 0 hits');
     });
 
     it('Order preserves scheduleMode/dedupIp/randomLinks and executes via local proxy only after single-account admin confirm', async () => {
@@ -594,8 +680,21 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
             });
 
             await page.goto(`${env.baseUrl}/boost`, { waitUntil: 'networkidle' });
-            assert.match(await page.textContent('#auth-pill'), /Khách/);
+            // Open-access mode by default: login controls hidden, Tab 2 immediately unlocked, collapsibles collapsed initially
+            assert.equal(await page.isHidden('#auth-pill'), true, 'Open-access mode must hide #auth-pill');
+            assert.equal(await page.isHidden('#open-login-btn'), true, 'Open-access mode must hide #open-login-btn');
+            assert.equal(await page.isHidden('#logout-btn'), true, 'Open-access mode must hide #logout-btn');
+            assert.equal(await page.$eval('#runtime-conn-details', el => el.open), false, '#runtime-conn-details starts collapsed');
+            assert.equal(await page.$eval('#spec-details', el => el.open), false, '#spec-details starts collapsed');
+            assert.equal(await page.$eval('#dist-preview-card', el => el.open), false, '#dist-preview-card starts collapsed');
             await page.waitForFunction(() => document.getElementById('socket-pill')?.textContent?.includes('Đã kết nối'));
+
+            // Toggle Switches (#f-dedup, #f-links) work cleanly
+            assert.equal(await page.isChecked('#f-dedup'), true);
+            await page.click('label[for="f-dedup"]');
+            assert.equal(await page.isChecked('#f-dedup'), false);
+            await page.click('label[for="f-dedup"]');
+            assert.equal(await page.isChecked('#f-dedup'), true);
 
             // Fractional clicks guard: must show hint + zero totals WITHOUT hitting 400 API error
             await page.fill('#f-clicks', '1.5');
@@ -608,6 +707,7 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
             await page.fill('#f-hours', '24');
             await page.selectOption('#f-schedule', 'custom');
             assert.equal(await page.isVisible('#custom-blocks-box'), true);
+            assert.equal(await page.$eval('#dist-preview-card', el => el.open), true, 'Changing schedule/inputs expands #dist-preview-card');
 
             const customDomCheck = await page.evaluate(() => {
                 const defs = window.TimeDistribution.TIME_BLOCK_DEFINITIONS;
@@ -719,7 +819,12 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
 
             assert.match(await page.textContent('#ao-status-pill'), /Chờ thanh toán/);
             assert.equal(await page.isVisible('#ao-qr-img'), true);
-            assert.equal(await page.isVisible('#inline-admin-confirm-btn'), false);
+            // Shareable Track Link card is prominently rendered
+            await page.waitForSelector('#ao-track-card:not(.hidden)');
+            assert.ok((await page.textContent('#ao-track-link')).includes(`/track.html?orderId=${createdOrderId}`));
+            assert.ok((await page.getAttribute('#ao-track-open-link', 'href')).includes(`/track.html?orderId=${createdOrderId}`));
+            // Open-access mode immediately exposes #inline-admin-confirm-btn & Tab 2 Admin workspace without login
+            assert.equal(await page.isVisible('#inline-admin-confirm-btn'), true);
 
             // Verify fallback renders when QR img errors without throwing console error
             await page.evaluate(() => {
@@ -749,42 +854,7 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
             assert.equal((await page.textContent('#lookup-order-msg')).trim(), '');
             assert.equal((await page.textContent('#ao-id')).trim(), createdOrderId);
 
-            // Verify single-admin-only mode + UI unconditionally reject legacy guest (1/1) with 401 in modal, then close cleanly
-            assert.equal(await page.isHidden('#admin-default-pw-banner'), true, 'Unauthenticated users must never see default password banner');
-            allowIntentional401 = true;
-            try {
-                await page.click('#open-login-btn');
-                await page.fill('#login-user', '1');
-                await page.fill('#login-pass', '1');
-                const [loginResp] = await Promise.all([
-                    page.waitForResponse(r => r.url().endsWith('/api/login') && r.request().method() === 'POST'),
-                    page.click('#submit-login-btn')
-                ]);
-                assert.equal(loginResp.status(), 401, 'Server must unconditionally reject 1/1 modal login with 401');
-                await page.waitForFunction(() => {
-                    const msg = document.getElementById('login-modal-msg')?.textContent || '';
-                    return msg.trim().length > 0;
-                });
-                assert.ok((await page.textContent('#auth-pill')).includes('Khách'));
-                assert.equal(await page.isVisible('#logout-btn'), false);
-                assert.equal(await page.isVisible('#inline-admin-confirm-btn'), false);
-                await page.click('#close-login-btn');
-                await page.waitForFunction(() => !document.getElementById('login-modal')?.classList.contains('open'));
-            } finally {
-                allowIntentional401 = false;
-            }
-
-            // Log in as single admin via modal WITHOUT reloading the page
-            await withTempAdminCredentials('PwDemoSecret_999', async (adminUser, adminPass) => {
-                await page.click('#open-login-btn');
-                await page.fill('#login-user', adminUser);
-                await page.fill('#login-pass', adminPass);
-                await page.click('#submit-login-btn');
-                await page.waitForFunction(() => document.getElementById('auth-pill')?.textContent?.includes('Admin:'));
-            });
-            assert.equal(await page.isHidden('#admin-default-pw-banner'), true, 'Non-default password must keep #admin-default-pw-banner hidden');
-
-            // Inline admin confirm button appears dynamically on active order without page refresh
+            // Confirm directly in default Open-Access mode (no login required!) & verify execution
             await page.waitForSelector('#inline-admin-confirm-btn:not(.hidden)');
             await page.click('#inline-admin-confirm-btn');
 
@@ -799,12 +869,16 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
 
             assert.equal((await page.textContent('#st-success')).trim(), '1');
             assert.match(await page.textContent('#ao-time-text'), /^Kết thúc thực tế:/);
+            assert.equal(await page.$eval('#ao-admin-log-wrap', el => el.open), false, '#ao-admin-log-wrap starts collapsed');
+            await page.click('#ao-admin-log-wrap > summary');
+            assert.equal(await page.$eval('#ao-admin-log-wrap', el => el.open), true);
             assert.match(await page.textContent('#ao-worker-log'), new RegExp(`\\[C${campId}\\]`));
             assert.ok(targetHits.some(h => h.url === '/pw-boost'), 'Playwright-confirmed order must deliver HTTP hit');
 
-            // Switch to Admin tab and verify order table, server campaigns table, webhook URL, and delete cleanup
+            // Switch to Admin tab immediately (no login) and verify order table, server campaigns table, webhook URL, and delete cleanup
             await page.click('[data-tab="admin"]');
             await page.waitForSelector('#admin-workspace:not(.hidden)');
+            assert.equal(await page.isHidden('#admin-gate-box'), true);
             assert.equal((await page.textContent('#cfg-webhook-url')).trim(), `${env.baseUrl}/api/payment/webhook`);
             assert.match(await page.textContent('#adm-campaigns-body'), new RegExp(campId));
             assert.match(await page.textContent('#adm-orders-body'), new RegExp(createdOrderId));
@@ -819,25 +893,61 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
             const afterDelRes = await env.request('GET', `/api/orders/${createdOrderId}`);
             assert.equal(afterDelRes.status, 404);
 
-            // Logging out of Admin must wipe admin table/summary values cleanly
-            await page.click('#logout-btn');
-            await page.waitForFunction(() => document.getElementById('auth-pill')?.textContent?.includes('Khách'));
-            assert.equal((await page.textContent('#adm-sum-total')).trim(), '0');
-            assert.match(await page.textContent('#adm-orders-body'), /Chưa có đơn hàng nào/);
+            // Verify REQUIRE_AUTH=true RBAC modal login flow, guest (1/1) rejection, default password banner, and logout cleanup
+            const savedRequireAuth = process.env.REQUIRE_AUTH;
+            process.env.REQUIRE_AUTH = 'true';
+            try {
+                await page.click('[data-tab="customer"]');
+                await page.reload({ waitUntil: 'networkidle' });
+                await page.waitForSelector('#open-login-btn:not(.hidden)');
+                assert.match(await page.textContent('#auth-pill'), /Khách/);
+                assert.equal(await page.isHidden('#admin-default-pw-banner'), true, 'Unauthenticated users must never see default password banner');
 
-            // Default password banner (#admin-default-pw-banner) shows only when authenticated admin uses admin123456
-            await withTempAdminCredentials('admin123456', async (adminUser, defaultPass) => {
-                await page.click('#open-login-btn');
-                await page.fill('#login-user', adminUser);
-                await page.fill('#login-pass', defaultPass);
-                await page.click('#submit-login-btn');
-                await page.waitForFunction(() => document.getElementById('auth-pill')?.textContent?.includes('Admin:'));
-                await page.waitForSelector('#admin-default-pw-banner:not(.hidden)');
-            });
-            await page.click('#logout-btn');
-            await page.waitForFunction(() => document.getElementById('auth-pill')?.textContent?.includes('Khách'));
-            await page.waitForFunction(() => document.getElementById('admin-default-pw-banner')?.classList.contains('hidden'));
-            assert.equal(await page.isHidden('#admin-default-pw-banner'), true);
+                allowIntentional401 = true;
+                try {
+                    await page.click('#open-login-btn');
+                    await page.fill('#login-user', '1');
+                    await page.fill('#login-pass', '1');
+                    const [loginResp] = await Promise.all([
+                        page.waitForResponse(r => r.url().endsWith('/api/login') && r.request().method() === 'POST'),
+                        page.click('#submit-login-btn')
+                    ]);
+                    assert.equal(loginResp.status(), 401, 'Server must unconditionally reject 1/1 modal login with 401');
+                    await page.waitForFunction(() => {
+                        const msg = document.getElementById('login-modal-msg')?.textContent || '';
+                        return msg.trim().length > 0;
+                    });
+                    assert.ok((await page.textContent('#auth-pill')).includes('Khách'));
+                    assert.equal(await page.isVisible('#logout-btn'), false);
+                    await page.click('#close-login-btn');
+                    await page.waitForFunction(() => !document.getElementById('login-modal')?.classList.contains('open'));
+                } finally {
+                    allowIntentional401 = false;
+                }
+
+                // Default password banner (#admin-default-pw-banner) shows when authenticated admin uses admin123456
+                await withTempAdminCredentials('admin123456', async (adminUser, defaultPass) => {
+                    await page.click('#open-login-btn');
+                    await page.fill('#login-user', adminUser);
+                    await page.fill('#login-pass', defaultPass);
+                    await page.click('#submit-login-btn');
+                    await page.waitForFunction(() => document.getElementById('auth-pill')?.textContent?.includes('Admin:'));
+                    await page.waitForSelector('#admin-default-pw-banner:not(.hidden)');
+                    await page.click('[data-tab="admin"]');
+                    await page.waitForSelector('#admin-workspace:not(.hidden)');
+                });
+
+                // Logging out of Admin must wipe admin table/summary values cleanly and hide banner
+                await page.click('#logout-btn');
+                await page.waitForFunction(() => document.getElementById('auth-pill')?.textContent?.includes('Khách'));
+                assert.equal((await page.textContent('#adm-sum-total')).trim(), '0');
+                assert.match(await page.textContent('#adm-orders-body'), /Chưa có đơn hàng nào/);
+                await page.waitForFunction(() => document.getElementById('admin-default-pw-banner')?.classList.contains('hidden'));
+                assert.equal(await page.isHidden('#admin-default-pw-banner'), true);
+            } finally {
+                if (savedRequireAuth !== undefined) process.env.REQUIRE_AUTH = savedRequireAuth;
+                else delete process.env.REQUIRE_AUTH;
+            }
 
             assert.deepEqual(badResponses, [], `Unexpected HTTP >= 400 responses: ${badResponses.join('; ')}`);
             assert.deepEqual(pageErrors, [], `Unexpected uncaught page errors: ${pageErrors.join('; ')}`);

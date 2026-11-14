@@ -540,29 +540,48 @@ function applyRoleUI(role, username) {
 }
 
 function createTabButton(c) {
-    const tab = document.createElement('button');
-    tab.type = 'button';
+    const tab = document.createElement('div');
     tab.className = 'tab-btn';
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('tabindex', '0');
+    tab.setAttribute('aria-selected', c.id === activeCampaignId ? 'true' : 'false');
     tab.setAttribute('data-campaign-id', c.id);
     if (c.id === activeCampaignId) tab.classList.add('active');
 
     const dotClass = statusToDotClass(c.status);
     const displayName = c.name || `Chien dich ${c.id}`;
 
-    tab.innerHTML = `
-        <span class="tab-status-dot ${dotClass}"></span>
-        <span>${displayName}</span>
-        <button type="button" class="tab-delete" data-campaign-id="${c.id}" title="Xoa chien dich" style="display: inline-flex;">
-            <i class="fa-solid fa-xmark"></i>
-        </button>
-    `;
+    const dot = document.createElement('span');
+    dot.className = `tab-status-dot ${dotClass}`;
+
+    const titleSpan = document.createElement('span');
+    titleSpan.className = 'tab-title';
+    titleSpan.textContent = displayName;
+
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'tab-delete';
+    delBtn.setAttribute('data-campaign-id', c.id);
+    delBtn.setAttribute('title', 'Xoa chien dich');
+    delBtn.style.display = 'inline-flex';
+    delBtn.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+
+    tab.append(dot, titleSpan, delBtn);
 
     tab.addEventListener('click', (e) => {
         if (e.target.closest('.tab-delete')) return;
         switchCampaign(c.id);
     });
 
-    tab.querySelector('.tab-delete').addEventListener('click', (e) => {
+    tab.addEventListener('keydown', (e) => {
+        if (e.target.closest('.tab-delete')) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            switchCampaign(c.id);
+        }
+    });
+
+    delBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         deleteCampaign(c.id, displayName);
     });

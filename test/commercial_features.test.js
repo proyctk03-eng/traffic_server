@@ -360,7 +360,7 @@ describe('Commercial Features Comprehensive Test Suite', () => {
             );
         });
 
-        it('enforces 401/403 on admin orders & payment-config endpoints for non-admin callers', async () => {
+        it('enforces 401/403 on admin orders & payment-config endpoints for non-admin callers (and unauth when REQUIRE_AUTH=true)', async () => {
             const dummyOrder = await createTestOrder({ name: 'Auth Guard Check' });
 
             const endpoints = [
@@ -375,11 +375,18 @@ describe('Commercial Features Comprehensive Test Suite', () => {
             ];
 
             for (const ep of endpoints) {
-                const unauth = await env.request(ep.method, ep.url, { body: ep.body || null });
-                assert.strictEqual(unauth.status, 401, `Expected 401 unauthenticated for ${ep.method} ${ep.url}`);
-
                 const nonAdmin = await env.request(ep.method, ep.url, { cookie: nonAdminCookie, body: ep.body || null });
                 assert.strictEqual(nonAdmin.status, 403, `Expected 403 non-admin for ${ep.method} ${ep.url}`);
+
+                const savedRequireAuth = process.env.REQUIRE_AUTH;
+                process.env.REQUIRE_AUTH = 'true';
+                try {
+                    const unauth = await env.request(ep.method, ep.url, { body: ep.body || null });
+                    assert.strictEqual(unauth.status, 401, `Expected 401 unauthenticated for ${ep.method} ${ep.url}`);
+                } finally {
+                    if (savedRequireAuth !== undefined) process.env.REQUIRE_AUTH = savedRequireAuth;
+                    else delete process.env.REQUIRE_AUTH;
+                }
             }
         });
 
@@ -721,6 +728,18 @@ describe('Commercial Features Comprehensive Test Suite', () => {
     // 6. Socket.IO Auth Scoping & Order Room Isolation
     // ─────────────────────────────────────────────────────────────────────────
     describe('6. Socket.IO Auth Scoping & Order Room Isolation', () => {
+        let savedRequireAuth;
+
+        before(() => {
+            savedRequireAuth = process.env.REQUIRE_AUTH;
+            process.env.REQUIRE_AUTH = 'true';
+        });
+
+        after(() => {
+            if (savedRequireAuth !== undefined) process.env.REQUIRE_AUTH = savedRequireAuth;
+            else delete process.env.REQUIRE_AUTH;
+        });
+
         it('does not send proxy-config or campaigns-list to anonymous Socket.IO clients, unlike admin clients', async () => {
             const anonClient = new SocketClient(env.baseUrl);
             const adminClient = new SocketClient(env.baseUrl, { cookie: env.adminCookie });
@@ -837,45 +856,77 @@ describe('Commercial Features Comprehensive Test Suite', () => {
     // 7. Public & Auth HTTP Endpoint Checks
     // ─────────────────────────────────────────────────────────────────────────
     describe('7. Public & Auth HTTP Endpoint Checks', () => {
-        it('returns HTTP 200 for /order.html, /track.html, /login.html, and POST /api/orders/calculate-cost without auth', async () => {
-            for (const pagePath of ['/order.html', '/track.html', '/login.html']) {
-                const res = await env.request('GET', pagePath);
-                assert.strictEqual(res.status, 200, `Expected HTTP 200 for ${pagePath}`);
-                assert.match(String(res.headers['content-type'] || ''), /text\/html/i);
-            }
+        it('default Open-Access mode serves GET / (200), exposes authRequired=false in /api/public-config, and redirects /login.html -> /', async () => {
+            const rootRes = await env.request('GET', '/');
+            assert.strictEqual(rootRes.status, 200);
+            assert.match(String(rootRes.headers['content-type'] || ''), /text\/html/i);
 
-            const calcRes = await env.request('POST', '/api/orders/calculate-cost', {
-                body: { targetClicks: 1000, durationHours: 1.5 }
-            });
-            assert.strictEqual(calcRes.status, 200);
-            assert.strictEqual(calcRes.body.success, true);
-            assert.strictEqual(calcRes.body.totalAmount, 44000);
-        });
-
-        it('enforces auth on GET /api/admin/orders (401 unauthenticated, 403 non-admin, 200 admin), rejects 1/1 login, and root / redirect', async () => {
-            const unauthAdminOrders = await env.request('GET', '/api/admin/orders');
-            assert.strictEqual(unauthAdminOrders.status, 401);
-
-            const nonAdminOrders = await env.request('GET', '/api/admin/orders', { cookie: nonAdminCookie });
-            assert.strictEqual(nonAdminOrders.status, 403);
-
-            const legacyLogin = await env.request('POST', '/api/login', { body: { username: '1', password: '1' } });
-            assert.strictEqual(legacyLogin.status, 401);
+            const loginRedirectRes = await env.request('GET', '/login.html');
+            assert.strictEqual(loginRedirectRes.status, 302);
+            assert.strictEqual(loginRedirectRes.headers.location, '/');
 
             const pubCfg = await env.request('GET', '/api/public-config');
             assert.strictEqual(pubCfg.status, 200);
+            assert.strictEqual(pubCfg.body.authRequired, false);
+            assert.strictEqual(pubCfg.body.authenticated, true);
+            assert.strictEqual(pubCfg.body.role, 'admin');
             assert.strictEqual(pubCfg.body.guestEnabled, false);
+        });
 
-            const adminOrders = await env.request('GET', '/api/admin/orders', { cookie: env.adminCookie });
-            assert.strictEqual(adminOrders.status, 200);
-            assert.strictEqual(adminOrders.body.success, true);
+        it('returns HTTP 200 for /order.html, /track.html, /login.html (when REQUIRE_AUTH=true), and POST /api/orders/calculate-cost without auth', async () => {
+            const savedRequireAuth = process.env.REQUIRE_AUTH;
+            process.env.REQUIRE_AUTH = 'true';
+            try {
+                for (const pagePath of ['/order.html', '/track.html', '/login.html']) {
+                    const res = await env.request('GET', pagePath);
+                    assert.strictEqual(res.status, 200, `Expected HTTP 200 for ${pagePath}`);
+                    assert.match(String(res.headers['content-type'] || ''), /text\/html/i);
+                }
 
-            const unauthRoot = await env.request('GET', '/');
-            assert.strictEqual(unauthRoot.status, 302);
-            assert.strictEqual(unauthRoot.headers.location, '/login.html');
+                const calcRes = await env.request('POST', '/api/orders/calculate-cost', {
+                    body: { targetClicks: 1000, durationHours: 1.5 }
+                });
+                assert.strictEqual(calcRes.status, 200);
+                assert.strictEqual(calcRes.body.success, true);
+                assert.strictEqual(calcRes.body.totalAmount, 44000);
+            } finally {
+                if (savedRequireAuth !== undefined) process.env.REQUIRE_AUTH = savedRequireAuth;
+                else delete process.env.REQUIRE_AUTH;
+            }
+        });
 
-            const authRoot = await env.request('GET', '/', { cookie: env.adminCookie });
-            assert.strictEqual(authRoot.status, 200);
+        it('enforces auth on GET /api/admin/orders (401 unauthenticated when REQUIRE_AUTH=true, 403 non-admin, 200 admin), rejects 1/1 login, and root / redirect', async () => {
+            const savedRequireAuth = process.env.REQUIRE_AUTH;
+            process.env.REQUIRE_AUTH = 'true';
+            try {
+                const unauthAdminOrders = await env.request('GET', '/api/admin/orders');
+                assert.strictEqual(unauthAdminOrders.status, 401);
+
+                const nonAdminOrders = await env.request('GET', '/api/admin/orders', { cookie: nonAdminCookie });
+                assert.strictEqual(nonAdminOrders.status, 403);
+
+                const legacyLogin = await env.request('POST', '/api/login', { body: { username: '1', password: '1' } });
+                assert.strictEqual(legacyLogin.status, 401);
+
+                const pubCfg = await env.request('GET', '/api/public-config');
+                assert.strictEqual(pubCfg.status, 200);
+                assert.strictEqual(pubCfg.body.authRequired, true);
+                assert.strictEqual(pubCfg.body.guestEnabled, false);
+
+                const adminOrders = await env.request('GET', '/api/admin/orders', { cookie: env.adminCookie });
+                assert.strictEqual(adminOrders.status, 200);
+                assert.strictEqual(adminOrders.body.success, true);
+
+                const unauthRoot = await env.request('GET', '/');
+                assert.strictEqual(unauthRoot.status, 302);
+                assert.strictEqual(unauthRoot.headers.location, '/login.html');
+
+                const authRoot = await env.request('GET', '/', { cookie: env.adminCookie });
+                assert.strictEqual(authRoot.status, 200);
+            } finally {
+                if (savedRequireAuth !== undefined) process.env.REQUIRE_AUTH = savedRequireAuth;
+                else delete process.env.REQUIRE_AUTH;
+            }
         });
     });
 });

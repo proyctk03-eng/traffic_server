@@ -406,11 +406,13 @@
         if (mode === 'demo') {
             try {
                 const u = new URL(global.location.href);
+                u.searchParams.delete('backend');
+                u.searchParams.set('mode', 'demo');
                 u.searchParams.set('orderId', cleanId);
                 u.searchParams.delete('order');
                 return u.toString();
             } catch (e) {
-                return `?orderId=${encoded}`;
+                return `?mode=demo&orderId=${encoded}`;
             }
         }
         const origin = (global.location && global.location.origin) ? global.location.origin : '';

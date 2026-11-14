@@ -333,8 +333,11 @@ describe('Challenger 1: Empirical Security & Resilience Stress Suite', () => {
         let appServer = null;
         let appPort = null;
         let axiosClient = null;
+        let savedRequireAuth = undefined;
 
         before(async () => {
+            savedRequireAuth = process.env.REQUIRE_AUTH;
+            process.env.REQUIRE_AUTH = 'true';
             await new Promise(resolve => server.server.listen(0, '127.0.0.1', resolve));
             appPort = server.server.address().port;
             const axios = require('axios');
@@ -345,6 +348,8 @@ describe('Challenger 1: Empirical Security & Resilience Stress Suite', () => {
         });
 
         after(() => {
+            if (savedRequireAuth !== undefined) process.env.REQUIRE_AUTH = savedRequireAuth;
+            else delete process.env.REQUIRE_AUTH;
             if (server.server) server.server.close();
         });
 

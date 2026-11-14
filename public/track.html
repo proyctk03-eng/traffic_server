@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:,">
 <title>Tra cứu đơn hàng Traffic</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -24,6 +25,10 @@
   --text-2: #94a3b8;
   --muted: #64748b;
   --r: 16px;
+}
+html, body {
+  overflow-x: hidden;
+  max-width: 100%;
 }
 body {
   font-family: 'Inter', system-ui, sans-serif;
@@ -173,7 +178,7 @@ input:focus { border-color: rgba(99, 102, 241, 0.65); box-shadow: 0 0 0 3px rgba
   border: 1px solid rgba(6, 182, 212, 0.28);
 }
 .track-share-head { font-size: 12px; font-weight: 600; color: #67e8f9; margin-bottom: 7px; display: flex; align-items: center; gap: 6px; }
-.track-share-row { display: flex; align-items: center; gap: 8px; }
+.track-share-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .track-share-url {
   flex: 1; min-width: 0;
   font-family: 'JetBrains Mono', monospace;
@@ -195,9 +200,10 @@ input:focus { border-color: rgba(99, 102, 241, 0.65); box-shadow: 0 0 0 3px rgba
 
 .kv {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
-  gap: 10px;
+  gap: 6px 10px;
   padding: 9px 0;
   border-bottom: 1px solid var(--border);
   font-size: 13.5px;
@@ -414,16 +420,43 @@ function startTracking(id) {
 }
 function stopPolling() { if (pollTimer) clearInterval(pollTimer); pollTimer = null; }
 
+async function copyTextWithFallback(txt) {
+  const s = String(txt || '');
+  if (!s) return false;
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    try {
+      await navigator.clipboard.writeText(s);
+      return true;
+    } catch (e) {}
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = s;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return Boolean(ok);
+  } catch (e) {
+    return false;
+  }
+}
+
 if ($('btnCopyShare')) {
-  $('btnCopyShare').addEventListener('click', () => {
+  $('btnCopyShare').addEventListener('click', async () => {
     const txt = $('shareTrackText') ? $('shareTrackText').textContent : '';
     if (!txt) return;
-    navigator.clipboard.writeText(txt).then(() => {
-      const span = $('btnCopyShare').querySelector('span');
-      const orig = span ? span.textContent : 'Sao chép';
-      if (span) span.textContent = 'Đã chép!';
-      setTimeout(() => { if (span) span.textContent = orig; }, 1400);
-    });
+    const ok = await copyTextWithFallback(txt);
+    const span = $('btnCopyShare').querySelector('span');
+    if (span) {
+      const orig = span.dataset.origLabel || span.textContent;
+      span.dataset.origLabel = orig;
+      span.textContent = ok ? 'Đã chép!' : 'Không thể chép';
+      setTimeout(() => { span.textContent = orig; }, 1400);
+    }
   });
 }
 

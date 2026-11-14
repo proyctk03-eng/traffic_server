@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="data:,">
     <title>Traffic Boost — Tạo Chiến dịch, VietQR &amp; Theo dõi Real-time</title>
     <style>
         :root {
@@ -43,6 +44,8 @@
             font-size: 14px;
             line-height: 1.5;
             -webkit-font-smoothing: antialiased;
+            overflow-x: hidden;
+            max-width: 100%;
         }
 
         body {
@@ -372,11 +375,19 @@
         /* ── Grid & Cards ─────────────────────────────────────────── */
         .grid-2 {
             display: grid;
-            grid-template-columns: 1.06fr 0.94fr;
+            grid-template-columns: minmax(0, 1.06fr) minmax(0, 0.94fr);
             gap: 18px;
             align-items: start;
         }
-        @media (max-width: 960px) { .grid-2 { grid-template-columns: 1fr; } }
+        @media (max-width: 960px) { .grid-2 { grid-template-columns: minmax(0, 1fr); } }
+
+        .grid-2 > *,
+        .collapsible-card,
+        .collapsible-body,
+        .table-wrap {
+            min-width: 0;
+            max-width: 100%;
+        }
 
         .card {
             background: var(--surface);
@@ -385,6 +396,8 @@
             padding: 18px;
             margin-bottom: 16px;
             box-shadow: var(--shadow-card);
+            min-width: 0;
+            max-width: 100%;
         }
 
         .card-header {
@@ -392,6 +405,7 @@
             padding-bottom: 11px;
             border-bottom: 1px solid var(--border);
             display: flex;
+            flex-wrap: wrap;
             align-items: center;
             justify-content: space-between;
             gap: 10px;
@@ -404,6 +418,7 @@
             border-bottom: 1px solid var(--border);
             padding-bottom: 11px;
             display: flex;
+            flex-wrap: wrap;
             align-items: center;
             justify-content: space-between;
             gap: 8px;
@@ -738,12 +753,18 @@
 
         .kv {
             display: flex;
+            flex-wrap: wrap;
             justify-content: space-between;
             align-items: center;
-            gap: 10px;
+            gap: 6px 10px;
             padding: 6px 0;
             font-size: 13px;
             border-bottom: 1px dashed rgba(148, 163, 184, 0.16);
+        }
+        .kv > * {
+            min-width: 0;
+            max-width: 100%;
+            overflow-wrap: anywhere;
         }
         .kv:last-child { border-bottom: none; }
         .kv > span:first-child { color: var(--muted); }
@@ -774,6 +795,8 @@
             margin-bottom: 12px;
             font-size: 13px;
             border: 1px solid;
+            overflow-wrap: anywhere;
+            word-break: break-word;
         }
         .alert.err { background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.38); color: #fecaca; }
         .alert.ok { background: rgba(16, 185, 129, 0.1); border-color: rgba(16, 185, 129, 0.38); color: #a7f3d0; }
@@ -912,11 +935,19 @@
             padding: 10px 12px;
             height: 220px;
             overflow-y: auto;
+            overflow-x: auto;
+            max-width: 100%;
             font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
             font-size: 12px;
             white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            word-break: break-word;
         }
-        .log-line { margin: 0 0 4px 0; }
+        .log-line, .log-entry {
+            margin: 0 0 4px 0;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
         .log-line.success { color: #34d399; }
         .log-line.warn { color: #fbbf24; }
         .log-line.error { color: #f87171; }
@@ -1484,7 +1515,7 @@
                 <div class="card">
                     <h2>
                         <span>Quản lý Toàn bộ Đơn hàng &amp; Duyệt thanh toán</span>
-                        <div style="display:flex; gap:8px; align-items:center;">
+                        <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
                             <select id="adm-filter" style="width:auto; padding:5px 9px; font-size:12px;">
                                 <option value="all">Tất cả trạng thái</option>
                                 <option value="pending_payment">Chờ thanh toán</option>

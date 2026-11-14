@@ -123,6 +123,17 @@ function verifyAdminCredentials(username, password) {
     }
 }
 
+function getConfiguredAdminUsername() {
+    if (!fs.existsSync(ADMIN_CONFIG_PATH)) initAdminAccount();
+    try {
+        const config = JSON.parse(fs.readFileSync(ADMIN_CONFIG_PATH, 'utf-8'));
+        if (config && typeof config.username === 'string' && config.username.trim()) {
+            return config.username.trim();
+        }
+    } catch (e) {}
+    return 'admin';
+}
+
 function isDefaultAdminPassword() {
     if (!fs.existsSync(ADMIN_CONFIG_PATH)) return true;
     try {
@@ -1449,8 +1460,16 @@ app.post('/api/logout', (req, res) => {
 app.post('/api/change-password', requireAdmin, (req, res) => {
     const { newUsername, newPassword, currentPassword } = req.body;
     if (!newUsername || !newPassword || !currentPassword) return res.status(400).json({ success: false, message: 'Dien du thong tin.' });
-    if (!verifyAdminCredentials(req.username, currentPassword)) return res.status(401).json({ success: false, message: 'Mat khau hien tai khong dung.' });
-    try { updateAdminAccount(newUsername, newPassword); activeSessions.set(req.sessionToken, { username: newUsername, role: 'admin', expiresAt: Date.now() + 24 * 60 * 60 * 1000 }); saveSessions(); return res.json({ success: true }); }
+    const targetUsername = (!req.sessionToken && !isAuthRequired()) ? getConfiguredAdminUsername() : req.username;
+    if (!verifyAdminCredentials(targetUsername, currentPassword)) return res.status(401).json({ success: false, message: 'Mat khau hien tai khong dung.' });
+    try {
+        updateAdminAccount(newUsername, newPassword);
+        if (req.sessionToken) {
+            activeSessions.set(req.sessionToken, { username: newUsername, role: 'admin', expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
+            saveSessions();
+        }
+        return res.json({ success: true });
+    }
     catch (e) { return res.status(500).json({ success: false, message: 'Loi luu.' }); }
 });
 

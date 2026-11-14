@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:,">
 <title>Đặt dịch vụ Traffic - VietQR Checkout</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -25,6 +26,10 @@
   --text-2: #94a3b8;
   --muted: #64748b;
   --r: 16px;
+}
+html, body {
+  overflow-x: hidden;
+  max-width: 100%;
 }
 body {
   font-family: 'Inter', system-ui, sans-serif;
@@ -391,9 +396,10 @@ button.is-loading .btn-icon { display: none; }
 }
 .kv {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
-  gap: 10px;
+  gap: 6px 10px;
   padding: 9px 0;
   border-bottom: 1px solid var(--border);
   font-size: 13.5px;
@@ -443,6 +449,7 @@ button.is-loading .btn-icon { display: none; }
 }
 .track-share-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
@@ -485,6 +492,8 @@ button.is-loading .btn-icon { display: none; }
 .badge { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 99px; font-size: 12px; font-weight: 700; }
 .b-wait { background: rgba(245, 158, 11, 0.14); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
 .b-ok { background: rgba(16, 185, 129, 0.14); color: var(--emerald-bright); border: 1px solid rgba(16, 185, 129, 0.35); }
+.b-done { background: rgba(99, 102, 241, 0.18); color: #c7d2fe; border: 1px solid rgba(99, 102, 241, 0.32); }
+.b-expired { background: rgba(239, 68, 68, 0.14); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.35); }
 .bar { height: 11px; border-radius: 99px; background: var(--bg); border: 1px solid var(--border); overflow: hidden; margin: 14px 0 6px; }
 .bar > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--cta-from), var(--emerald)); transition: width 0.5s ease; }
 .center { text-align: center; }
@@ -791,7 +800,11 @@ function render(o) {
     ? (o.expiresAt ? new Date(o.expiresAt).toLocaleString('vi-VN') : 'Hết hạn (30p)')
     : (p.endTime ? new Date(p.endTime).toLocaleString('vi-VN') : '—');
   const done = isExpired || st === 'completed' || st === 'expired' || st === 'stopped';
-  $('runBadge').textContent = done
+  const badgeEl = $('runBadge');
+  badgeEl.className = (isExpired || st === 'expired')
+    ? 'badge b-expired'
+    : (st === 'completed' || st === 'stopped' ? 'badge b-done' : 'badge b-ok');
+  badgeEl.textContent = done
     ? ((isExpired || st === 'expired') ? 'Hết hạn thanh toán' : st === 'completed' ? 'Hoàn thành' : 'Đã dừng')
     : 'Đã thanh toán · Đang chạy';
   if (done) stopPolling();
@@ -809,32 +822,61 @@ async function poll() {
 function startPolling() { stopPolling(); poll(); timer = setInterval(poll, 3000); }
 function stopPolling() { if (timer) clearInterval(timer); timer = null; }
 
-document.addEventListener('click', e => {
+async function copyTextWithFallback(txt) {
+  const s = String(txt || '');
+  if (!s) return false;
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    try {
+      await navigator.clipboard.writeText(s);
+      return true;
+    } catch (e) {}
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = s;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return Boolean(ok);
+  } catch (e) {
+    return false;
+  }
+}
+
+document.addEventListener('click', async e => {
   const cpBtn = e.target.closest('[data-cp]');
   if (cpBtn) {
     const id = cpBtn.dataset.cp;
     const el = $(id === 'bAmountRaw' ? 'bAmount' : id);
     const txt = id === 'bAmountRaw' ? el.dataset.raw : el.textContent;
-    navigator.clipboard.writeText(txt).then(() => {
-      const orig = cpBtn.textContent;
+    const ok = await copyTextWithFallback(txt);
+    if (ok) {
+      const orig = cpBtn.dataset.origLabel || cpBtn.textContent;
+      cpBtn.dataset.origLabel = orig;
       cpBtn.textContent = 'Đã chép';
       setTimeout(() => { cpBtn.textContent = orig; }, 1200);
-    });
+    }
   }
 });
 
 function wireCopyTracking(btnId, linkId) {
   const btn = $(btnId);
   if (!btn) return;
-  btn.addEventListener('click', () => {
+  btn.addEventListener('click', async () => {
     const href = $(linkId) ? $(linkId).href : '';
     if (!href) return;
-    navigator.clipboard.writeText(href).then(() => {
-      const span = btn.querySelector('span');
-      const orig = span ? span.textContent : 'Sao chép';
-      if (span) span.textContent = 'Đã chép!';
-      setTimeout(() => { if (span) span.textContent = orig; }, 1400);
-    });
+    const ok = await copyTextWithFallback(href);
+    const span = btn.querySelector('span');
+    if (span) {
+      const orig = span.dataset.origLabel || span.textContent;
+      span.dataset.origLabel = orig;
+      span.textContent = ok ? 'Đã chép!' : 'Không thể chép';
+      setTimeout(() => { span.textContent = orig; }, 1400);
+    }
   });
 }
 wireCopyTracking('btnCopyTrack2', 'trackLink');

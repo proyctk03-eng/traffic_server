@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="data:,">
     <title>Traffic Control System</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -63,15 +64,19 @@
         .campaigns-tabs-area {
             display: flex;
             align-items: center;
+            flex-wrap: wrap;
             gap: 8px;
             margin-bottom: 16px;
-            overflow-x: auto;
+            max-width: 100%;
+            min-width: 0;
             padding-bottom: 4px;
         }
         .tab-btn {
             display: flex;
             align-items: center;
             gap: 8px;
+            max-width: 100%;
+            overflow: hidden;
             background: rgba(255,255,255,0.04);
             border: 1px solid rgba(255,255,255,0.08);
             border-radius: 10px;
@@ -83,6 +88,10 @@
             transition: all 0.2s;
             white-space: nowrap;
             font-family: 'Outfit', sans-serif;
+        }
+        .tab-btn .tab-title {
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
         .tab-btn:hover { border-color: rgba(99,102,241,0.3); color: #e2e8f0; }
         .tab-btn.active { background: rgba(99,102,241,0.15); border-color: rgba(99,102,241,0.5); color: #818cf8; }
@@ -151,6 +160,9 @@
         /* Modal for add campaign */
         .modal-overlay {
             position: fixed; inset: 0;
+            padding: 16px;
+            overflow-y: auto;
+            overflow-x: hidden;
             background: rgba(0,0,0,0.7);
             backdrop-filter: blur(6px);
             z-index: 1000;
@@ -170,11 +182,30 @@
             max-width: 580px;
             max-height: 90vh;
             overflow-y: auto;
+            overflow-x: hidden;
+            box-sizing: border-box;
             transform: translateY(20px);
             transition: transform 0.25s;
             box-shadow: 0 30px 80px rgba(0,0,0,0.65);
         }
         .modal-overlay.open .modal-card { transform: translateY(0); }
+        .modal-card input,
+        .modal-card select {
+            min-width: 0;
+            max-width: 100%;
+        }
+        @media (max-width: 640px) {
+            .proxy-pool-grid {
+                grid-template-columns: 1fr;
+            }
+            .modal-card {
+                padding: 20px 16px;
+            }
+            .modal-grid-2,
+            .modal-grid-3 {
+                grid-template-columns: 1fr !important;
+            }
+        }
         .modal-header {
             display: flex;
             align-items: center;
@@ -448,7 +479,7 @@
                             <span id="campaign-status-pill" class="campaign-status-pill stopped">Dang dung</span>
                         </div>
                         <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                            <button type="button" id="stop-btn" class="btn btn-danger has-spinner" disabled style="padding: 8px 18px; font-size: 13px;">
+                            <button type="button" id="stop-btn" class="btn btn-danger has-spinner" disabled style="padding: 8px 18px; font-size: 13px; flex: 0 0 auto;">
                                 <i class="fa-solid fa-stop"></i> <span>Dừng</span>
                             </button>
                             <button type="button" class="btn-ghost has-spinner" id="reset-stats-btn" style="color: #fca5a5;">
@@ -489,7 +520,7 @@
                         <div class="progress-bar-bg">
                             <div class="progress-bar-fill" style="width: 0%"></div>
                         </div>
-                        <div style="margin-top: 6px; font-size: 12px; color: #64748b; display: flex; justify-content: space-between;">
+                        <div style="margin-top: 6px; font-size: 12px; color: #64748b; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px;">
                             <span>ETA: <span id="stat-eta-time">--:--</span></span>
                             <span>Con lai: <span id="stat-time-remaining">--</span></span>
                         </div>
@@ -568,7 +599,7 @@
 
                     <!-- Completion Report Card (Shown when campaign completed/finished) -->
                     <section class="card completion-report-card" id="completion-report-card" style="display: none; margin-bottom: 20px; border: 1px solid rgba(16, 185, 129, 0.3); background: linear-gradient(135deg, rgba(16, 185, 129, 0.08), rgba(5, 150, 105, 0.03));">
-                        <div class="card-header" style="justify-content: space-between; display: flex; align-items: center; border-bottom: 1px solid rgba(16, 185, 129, 0.2); padding-bottom: 10px; margin-bottom: 14px;">
+                        <div class="card-header" style="justify-content: space-between; display: flex; align-items: center; flex-wrap: wrap; gap: 10px; border-bottom: 1px solid rgba(16, 185, 129, 0.2); padding-bottom: 10px; margin-bottom: 14px;">
                             <div style="display: flex; align-items: center; gap: 10px; color: #10b981;">
                                 <i class="fa-solid fa-trophy" style="font-size: 18px;"></i>
                                 <h2 style="font-size: 15px; font-weight: 700; color: #10b981; margin: 0;">Báo Cáo Hoàn Thành Chiến Dịch</h2>
@@ -626,7 +657,7 @@
                     </label>
                     <input type="url" id="new-campaign-url" placeholder="https://example.com/target" required style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid rgba(99,102,241,0.2); border-radius: 10px; padding: 12px 16px; font-size: 14px; font-family: 'Outfit', sans-serif; color: #e2e8f0; outline: none; box-sizing: border-box;">
                 </div>
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px;">
+                <div class="modal-grid-2" style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px;">
                     <div>
                         <label style="font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; display: block;">
                             <i class="fa-solid fa-clock"></i> Bat dau *
@@ -652,7 +683,7 @@
                     <label style="font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; display: block;">
                         <i class="fa-solid fa-chart-line"></i> Che do phan bo theo gio (Traffic Profile)
                     </label>
-                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+                    <div class="modal-grid-3" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
                         <label class="schedule-mode-card" id="card-mode-smart" style="cursor: pointer; background: rgba(99,102,241,0.15); border: 1px solid rgba(99,102,241,0.5); border-radius: 10px; padding: 10px 8px; text-align: center; transition: all 0.2s;">
                             <input type="radio" name="new-schedule-mode" value="smart" checked style="display: none;">
                             <div style="font-size: 13px; font-weight: 700; color: #818cf8; margin-bottom: 2px;">
@@ -697,7 +728,7 @@
                     <div style="font-size: 11.5px; font-weight: 700; color: #e2e8f0; margin-bottom: 10px;">
                         <i class="fa-solid fa-clock-rotate-left"></i> Chon muc hoat dong cho tung khung gio:
                     </div>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 12px;">
+                    <div class="modal-grid-2" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 12px;">
                         <div>
                             <span style="color: #94a3b8;">🌙 00:00 - 06:00 (Dem):</span>
                             <select id="custom-block-night" style="width: 100%; margin-top: 4px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; padding: 6px 10px; color: #e2e8f0; font-size: 12px;">
@@ -746,7 +777,7 @@
                                 <option value="high" selected>Cao (Nhieu luot)</option>
                             </select>
                         </div>
-                        <div style="grid-column: span 2;">
+                        <div style="grid-column: 1 / -1;">
                             <span style="color: #94a3b8;">🌜 22:00 - 00:00 (Khuya):</span>
                             <select id="custom-block-late" style="width: 100%; margin-top: 4px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; padding: 6px 10px; color: #e2e8f0; font-size: 12px;">
                                 <option value="low">Thap</option>
@@ -762,7 +793,7 @@
                     <summary style="font-size: 13px; color: #64748b; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 8px;">
                         <i class="fa-solid fa-cog"></i> Cai dat nang cao
                     </summary>
-                    <div style="margin-top: 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                    <div class="modal-grid-2" style="margin-top: 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
                         <div>
                             <label style="font-size: 11px; color: #64748b; margin-bottom: 6px; display: block;">Xem toi thieu (s)</label>
                             <input type="number" id="new-dwell-min" min="1" value="2" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid rgba(99,102,241,0.15); border-radius: 8px; padding: 8px 12px; font-size: 13px; color: #e2e8f0; outline: none; box-sizing: border-box;">
@@ -784,7 +815,7 @@
                                 <option value="settings">Profile + Xoa qua Settings</option>
                             </select>
                         </div>
-                        <div style="grid-column: span 2;">
+                        <div style="grid-column: 1 / -1;">
                             <label style="font-size: 11px; color: #10b981; margin-bottom: 6px; display: block; font-weight: 600;">
                                 <i class="fa-solid fa-clock"></i> Cooldown rieng cho chien dich nay (giay)
                             </label>

@@ -465,7 +465,9 @@ describe('Security Hardening, Engine Reliability & Backend API Test Suite', () =
             }
         });
 
-        it('enforces 24-hour session TTL for sessions containing expiresAt timestamp', async () => {
+        it('enforces 24-hour session TTL for sessions containing expiresAt timestamp (when REQUIRE_AUTH=true)', async () => {
+            const savedRequireAuth = process.env.REQUIRE_AUTH;
+            process.env.REQUIRE_AUTH = 'true';
             const expiredToken = `test-expired-${crypto.randomUUID()}`;
             const validToken = `test-valid-${crypto.randomUUID()}`;
 
@@ -498,6 +500,8 @@ describe('Security Hardening, Engine Reliability & Backend API Test Suite', () =
             } finally {
                 activeSessions.delete(expiredToken);
                 activeSessions.delete(validToken);
+                if (savedRequireAuth !== undefined) process.env.REQUIRE_AUTH = savedRequireAuth;
+                else delete process.env.REQUIRE_AUTH;
             }
         });
 
@@ -519,23 +523,32 @@ describe('Security Hardening, Engine Reliability & Backend API Test Suite', () =
             }
         });
 
-        it('enforces admin-only access on sensitive endpoints (/api/campaigns & /api/proxy-config)', async () => {
-            // Unauthenticated
-            const unauthCamp = await env.request('GET', '/api/campaigns');
-            assert.strictEqual(unauthCamp.status, 401);
+        it('enforces admin-only access on sensitive endpoints (/api/campaigns & /api/proxy-config) when REQUIRE_AUTH=true', async () => {
+            const savedRequireAuth = process.env.REQUIRE_AUTH;
+            process.env.REQUIRE_AUTH = 'true';
+            try {
+                // Unauthenticated
+                const unauthCamp = await env.request('GET', '/api/campaigns');
+                assert.strictEqual(unauthCamp.status, 401);
 
-            const unauthProxy = await env.request('GET', '/api/proxy-config');
-            assert.strictEqual(unauthProxy.status, 401);
+                const unauthProxy = await env.request('GET', '/api/proxy-config');
+                assert.strictEqual(unauthProxy.status, 401);
 
-            // Admin
-            const adminCamp = await env.request('GET', '/api/campaigns', { cookie: env.adminCookie });
-            assert.strictEqual(adminCamp.status, 200);
+                // Admin
+                const adminCamp = await env.request('GET', '/api/campaigns', { cookie: env.adminCookie });
+                assert.strictEqual(adminCamp.status, 200);
 
-            const adminProxy = await env.request('GET', '/api/proxy-config', { cookie: env.adminCookie });
-            assert.strictEqual(adminProxy.status, 200);
+                const adminProxy = await env.request('GET', '/api/proxy-config', { cookie: env.adminCookie });
+                assert.strictEqual(adminProxy.status, 200);
+            } finally {
+                if (savedRequireAuth !== undefined) process.env.REQUIRE_AUTH = savedRequireAuth;
+                else delete process.env.REQUIRE_AUTH;
+            }
         });
 
-        it('restricts Socket.IO admins room strictly to socketRole === admin', async () => {
+        it('restricts Socket.IO admins room strictly to socketRole === admin when REQUIRE_AUTH=true', async () => {
+            const savedRequireAuth = process.env.REQUIRE_AUTH;
+            process.env.REQUIRE_AUTH = 'true';
             const anonClient = new SocketClient(env.baseUrl);
             const adminClient = new SocketClient(env.baseUrl, { cookie: env.adminCookie });
 
@@ -554,7 +567,40 @@ describe('Security Hardening, Engine Reliability & Backend API Test Suite', () =
             } finally {
                 await anonClient.disconnect();
                 await adminClient.disconnect();
+                if (savedRequireAuth !== undefined) process.env.REQUIRE_AUTH = savedRequireAuth;
+                else delete process.env.REQUIRE_AUTH;
             }
+        });
+
+        it('POST /api/change-password in open-access mode verifies configured admin username without writing null session key', async () => {
+            await withTempAdminCredentials('InitOpenPass_1', async (_origUser, tmpPass) => {
+                const res1 = await env.request('POST', '/api/change-password', {
+                    body: {
+                        currentPassword: tmpPass,
+                        newUsername: 'renamedOpenAdmin',
+                        newPassword: 'UpdatedOpenPass_2'
+                    }
+                });
+                assert.strictEqual(res1.status, 200);
+                assert.strictEqual(res1.body.success, true);
+                assert.strictEqual(activeSessions.has(null), false, 'Open-access password change must not insert null session key');
+                assert.strictEqual(activeSessions.has('null'), false, 'Open-access password change must not insert string "null" session key');
+                if (fs.existsSync(SESSIONS_FILE)) {
+                    const diskSessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf-8'));
+                    assert.strictEqual(Object.prototype.hasOwnProperty.call(diskSessions, 'null'), false);
+                }
+
+                // Subsequent open-access call must validate against updated username in admin.json
+                const res2 = await env.request('POST', '/api/change-password', {
+                    body: {
+                        currentPassword: 'UpdatedOpenPass_2',
+                        newUsername: 'renamedOpenAdmin2',
+                        newPassword: 'UpdatedOpenPass_3'
+                    }
+                });
+                assert.strictEqual(res2.status, 200);
+                assert.strictEqual(res2.body.success, true);
+            });
         });
     });
 
@@ -810,54 +856,61 @@ describe('Security Hardening, Engine Reliability & Backend API Test Suite', () =
             assert.strictEqual(res.body.keys, undefined, 'Proxy keys must never be exposed');
         });
 
-        it('defaultPasswordWarning reflects default admin123456 only for authenticated admin and clears on password change, with #admin-default-pw-banner wired in UI', async () => {
+        it('defaultPasswordWarning reflects default admin123456 only for authenticated admin when REQUIRE_AUTH=true and clears on password change, with #admin-default-pw-banner wired in UI', async () => {
             const nonAdminCookie = env.seedNonAdminSession();
+            const savedRequireAuth = process.env.REQUIRE_AUTH;
+            process.env.REQUIRE_AUTH = 'true';
 
-            await withTempAdminCredentials('admin123456', async (adminUser, defaultPass) => {
-                const unauthRes = await env.request('GET', '/api/public-config');
-                assert.strictEqual(unauthRes.status, 200);
-                assert.strictEqual(unauthRes.body.defaultPasswordWarning, false);
-                assert.strictEqual(unauthRes.body.guestEnabled, false);
+            try {
+                await withTempAdminCredentials('admin123456', async (adminUser, defaultPass) => {
+                    const unauthRes = await env.request('GET', '/api/public-config');
+                    assert.strictEqual(unauthRes.status, 200);
+                    assert.strictEqual(unauthRes.body.defaultPasswordWarning, false);
+                    assert.strictEqual(unauthRes.body.guestEnabled, false);
 
-                const nonAdminRes = await env.request('GET', '/api/public-config', { cookie: nonAdminCookie });
-                assert.strictEqual(nonAdminRes.status, 200);
-                assert.strictEqual(nonAdminRes.body.defaultPasswordWarning, false);
-                assert.strictEqual(nonAdminRes.body.guestEnabled, false);
+                    const nonAdminRes = await env.request('GET', '/api/public-config', { cookie: nonAdminCookie });
+                    assert.strictEqual(nonAdminRes.status, 200);
+                    assert.strictEqual(nonAdminRes.body.defaultPasswordWarning, false);
+                    assert.strictEqual(nonAdminRes.body.guestEnabled, false);
 
-                const loginRes = await env.request('POST', '/api/login', {
-                    body: { username: adminUser, password: defaultPass, rememberMe: false }
-                });
-                assert.strictEqual(loginRes.status, 200);
-                assert.ok(loginRes.cookies.session_token, 'Admin login must return session cookie');
-                const adminSessionCookie = `session_token=${loginRes.cookies.session_token}`;
-
-                try {
-                    const warnRes = await env.request('GET', '/api/public-config', { cookie: adminSessionCookie });
-                    assert.strictEqual(warnRes.status, 200);
-                    assert.strictEqual(warnRes.body.authenticated, true);
-                    assert.strictEqual(warnRes.body.role, 'admin');
-                    assert.strictEqual(warnRes.body.guestEnabled, false);
-                    assert.strictEqual(warnRes.body.defaultPasswordWarning, true);
-
-                    const changeRes = await env.request('POST', '/api/change-password', {
-                        cookie: adminSessionCookie,
-                        body: {
-                            currentPassword: defaultPass,
-                            newUsername: adminUser,
-                            newPassword: 'RotatedStrongPassword_2026!'
-                        }
+                    const loginRes = await env.request('POST', '/api/login', {
+                        body: { username: adminUser, password: defaultPass, rememberMe: false }
                     });
-                    assert.strictEqual(changeRes.status, 200);
-                    assert.strictEqual(changeRes.body.success, true);
+                    assert.strictEqual(loginRes.status, 200);
+                    assert.ok(loginRes.cookies.session_token, 'Admin login must return session cookie');
+                    const adminSessionCookie = `session_token=${loginRes.cookies.session_token}`;
 
-                    const clearedRes = await env.request('GET', '/api/public-config', { cookie: adminSessionCookie });
-                    assert.strictEqual(clearedRes.status, 200);
-                    assert.strictEqual(clearedRes.body.defaultPasswordWarning, false);
-                    assert.strictEqual(clearedRes.body.guestEnabled, false);
-                } finally {
-                    await env.request('POST', '/api/logout', { cookie: adminSessionCookie }).catch(() => {});
-                }
-            });
+                    try {
+                        const warnRes = await env.request('GET', '/api/public-config', { cookie: adminSessionCookie });
+                        assert.strictEqual(warnRes.status, 200);
+                        assert.strictEqual(warnRes.body.authenticated, true);
+                        assert.strictEqual(warnRes.body.role, 'admin');
+                        assert.strictEqual(warnRes.body.guestEnabled, false);
+                        assert.strictEqual(warnRes.body.defaultPasswordWarning, true);
+
+                        const changeRes = await env.request('POST', '/api/change-password', {
+                            cookie: adminSessionCookie,
+                            body: {
+                                currentPassword: defaultPass,
+                                newUsername: adminUser,
+                                newPassword: 'RotatedStrongPassword_2026!'
+                            }
+                        });
+                        assert.strictEqual(changeRes.status, 200);
+                        assert.strictEqual(changeRes.body.success, true);
+
+                        const clearedRes = await env.request('GET', '/api/public-config', { cookie: adminSessionCookie });
+                        assert.strictEqual(clearedRes.status, 200);
+                        assert.strictEqual(clearedRes.body.defaultPasswordWarning, false);
+                        assert.strictEqual(clearedRes.body.guestEnabled, false);
+                    } finally {
+                        await env.request('POST', '/api/logout', { cookie: adminSessionCookie }).catch(() => {});
+                    }
+                });
+            } finally {
+                if (savedRequireAuth !== undefined) process.env.REQUIRE_AUTH = savedRequireAuth;
+                else delete process.env.REQUIRE_AUTH;
+            }
 
             const boostHtml = fs.readFileSync(path.join(ROOT_DIR, 'public', 'boost.html'), 'utf-8');
             const boostUiJs = fs.readFileSync(path.join(ROOT_DIR, 'public', 'js', 'boost-ui.js'), 'utf-8');
@@ -980,9 +1033,16 @@ describe('Security Hardening, Engine Reliability & Backend API Test Suite', () =
         });
 
         it('Admin Telegram APIs: GET /api/admin/telegram, POST /api/admin/telegram, and POST /api/admin/telegram/test', async () => {
-            // Unauthenticated should fail with 401
-            const unauthGet = await env.request('GET', '/api/admin/telegram');
-            assert.strictEqual(unauthGet.status, 401);
+            // Unauthenticated should fail with 401 when REQUIRE_AUTH=true
+            const savedRequireAuth = process.env.REQUIRE_AUTH;
+            process.env.REQUIRE_AUTH = 'true';
+            try {
+                const unauthGet = await env.request('GET', '/api/admin/telegram');
+                assert.strictEqual(unauthGet.status, 401);
+            } finally {
+                if (savedRequireAuth !== undefined) process.env.REQUIRE_AUTH = savedRequireAuth;
+                else delete process.env.REQUIRE_AUTH;
+            }
 
             // Admin GET
             const adminGet = await env.request('GET', '/api/admin/telegram', { cookie: env.adminCookie });

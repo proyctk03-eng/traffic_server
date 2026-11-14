@@ -223,10 +223,17 @@ describe('Cloudflare Integration, CORS/Bearer Auth & Static Demo Dual-Mode', () 
         assert.equal(adminOrders.status, 200);
         assert.equal(adminOrders.headers.get('access-control-allow-origin'), 'https://dtc245200452-hub.github.io');
 
-        const apikeyDenied = await fetch(`${env.baseUrl}/api/admin/orders`, {
-            headers: { Authorization: `Apikey ${bearerToken}` }
-        });
-        assert.equal(apikeyDenied.status, 401);
+        const savedRequireAuth = process.env.REQUIRE_AUTH;
+        process.env.REQUIRE_AUTH = 'true';
+        try {
+            const apikeyDenied = await fetch(`${env.baseUrl}/api/admin/orders`, {
+                headers: { Authorization: `Apikey ${bearerToken}` }
+            });
+            assert.equal(apikeyDenied.status, 401);
+        } finally {
+            if (savedRequireAuth !== undefined) process.env.REQUIRE_AUTH = savedRequireAuth;
+            else delete process.env.REQUIRE_AUTH;
+        }
     });
 
     it('Static build script outputs relative asset paths, static mode flag, and .nojekyll without broken /socket.io tag', () => {
@@ -339,9 +346,18 @@ describe('Cloudflare Integration, CORS/Bearer Auth & Static Demo Dual-Mode', () 
             page.on('pageerror', (err) => pageErrors.push(err.message));
             page.on('response', (res) => { if (res.status() >= 400) badResponses.push(`${res.status()} ${res.url()}`); });
 
-            // 1. Offline Static Demo Mode on subpath /traffic_server/ (ZERO 404s, ZERO console errors)
+            // 1. Offline Static Demo Mode on subpath /traffic_server/ (NO LOGIN REQUIRED, ZERO 404s, ZERO console errors)
             await page.goto(`${staticBaseUrl}/traffic_server/`, { waitUntil: 'networkidle' });
             assert.match(await page.textContent('#runtime-mode-pill'), /Static Demo/);
+            assert.equal(await page.isHidden('#open-login-btn'), true, 'Open-access Static Demo must hide login button');
+            assert.equal(await page.isHidden('#auth-pill'), true, 'Open-access Static Demo must hide guest auth pill');
+
+            // Verify Toggle Switch & Tab 2 Admin immediate access in Static Demo
+            assert.equal(await page.isChecked('#f-dedup'), true);
+            await page.click('label[for="f-dedup"]');
+            assert.equal(await page.isChecked('#f-dedup'), false);
+            await page.click('label[for="f-dedup"]');
+            assert.equal(await page.isChecked('#f-dedup'), true);
 
             await page.fill('#f-name', 'Offline Pages Sim');
             await page.fill('#f-url', 'https://example.org/demo');
@@ -350,7 +366,8 @@ describe('Cloudflare Integration, CORS/Bearer Auth & Static Demo Dual-Mode', () 
             await page.fill('#f-hours', '0.5');
             await page.waitForFunction(() =>
                 document.getElementById('c-total')?.textContent?.includes('2.120') &&
-                document.getElementById('dist-interval-pill')?.textContent?.includes('600s')
+                document.getElementById('dist-interval-pill')?.textContent?.includes('600s') &&
+                document.getElementById('dist-preview-card')?.open === true
             );
             await page.click('#submit-order-btn');
 
@@ -358,14 +375,10 @@ describe('Cloudflare Integration, CORS/Bearer Auth & Static Demo Dual-Mode', () 
             const simOrderId = (await page.textContent('#ao-id')).trim();
             assert.ok(simOrderId.startsWith('ORD-'));
             assert.match(await page.textContent('#ao-status-pill'), /Chờ thanh toán/);
+            await page.waitForSelector('#ao-track-card:not(.hidden)');
+            assert.ok((await page.textContent('#ao-track-link')).includes(`orderId=${simOrderId}`));
 
-            // Log in via Demo Admin hint & run simulation to completion
-            await page.click('#open-login-btn');
-            assert.equal(await page.isVisible('#demo-login-hint'), true);
-            await page.fill('#login-user', 'admin');
-            await page.fill('#login-pass', 'admin123456');
-            await page.click('#submit-login-btn');
-
+            // Confirm immediately in Open-Access Static Demo without logging in
             await page.waitForSelector('#inline-admin-confirm-btn:not(.hidden)');
             await page.click('#inline-admin-confirm-btn');
             await page.waitForFunction(
@@ -376,10 +389,21 @@ describe('Cloudflare Integration, CORS/Bearer Auth & Static Demo Dual-Mode', () 
             assert.equal((await page.textContent('#st-success')).trim(), '3');
             assert.match(await page.textContent('#ao-worker-log'), /\[DEMO SIM\]/);
 
-            // 2. Cross-Origin Static Frontend -> Live Server Backend (?backend=env.baseUrl)
+            // Collapsible log details expands cleanly & Tab 2 Admin is immediately unlocked in Static Demo
+            const logOpenBefore = await page.$eval('#ao-admin-log-wrap', (el) => el.open);
+            assert.equal(logOpenBefore, false, 'Worker log details should start collapsed');
+            await page.click('#ao-admin-log-wrap > summary');
+            assert.equal(await page.$eval('#ao-admin-log-wrap', (el) => el.open), true);
+
+            await page.click('[data-tab="admin"]');
+            await page.waitForSelector('#admin-workspace:not(.hidden)');
+            await page.click('[data-tab="customer"]');
+
+            // 2. Cross-Origin Static Frontend -> Live Server Backend (?backend=env.baseUrl) in default Open-Access mode
             await page.goto(`${staticBaseUrl}/traffic_server/?backend=${encodeURIComponent(env.baseUrl)}`, { waitUntil: 'networkidle' });
             await page.waitForFunction(() => document.getElementById('runtime-mode-pill')?.textContent?.includes('Remote Tunnel'));
             await page.waitForFunction(() => document.getElementById('socket-pill')?.textContent?.includes('Đã kết nối'));
+            assert.equal(await page.isHidden('#open-login-btn'), true, 'Open-access Remote Tunnel must hide login button');
 
             await page.fill('#f-name', 'Cross-Origin Tunnel Real');
             await page.fill('#f-url', `http://127.0.0.1:${targetPort}/cross-origin-hit`);
@@ -393,15 +417,6 @@ describe('Cloudflare Integration, CORS/Bearer Auth & Static Demo Dual-Mode', () 
             env.trackOrder(realOrderId);
             env.trackProxyKey('K_REMOTE_TUNNEL_KEY_01');
 
-            await withTempAdminCredentials('RemoteTunnelPass_99', async (adminUser, tmpPass) => {
-                await page.click('#open-login-btn');
-                assert.equal(await page.isVisible('#demo-login-hint'), false);
-                await page.fill('#login-user', adminUser);
-                await page.fill('#login-pass', tmpPass);
-                await page.click('#submit-login-btn');
-                await page.waitForFunction(() => document.getElementById('auth-pill')?.textContent?.includes('Admin:'));
-            });
-
             await page.waitForSelector('#inline-admin-confirm-btn:not(.hidden)');
             await page.click('#inline-admin-confirm-btn');
             await page.waitForFunction(
@@ -413,10 +428,31 @@ describe('Cloudflare Integration, CORS/Bearer Auth & Static Demo Dual-Mode', () 
             env.trackCampaign(campId);
             assert.ok(targetHits.some(h => h.url === '/cross-origin-hit'), 'Cross-origin Remote Tunnel mode must trigger real backend HTTP hit');
 
-            // Verify webhook URL in Admin tab reflects the remote backend URL rather than static origin
+            // Verify webhook URL in Admin tab reflects the remote backend URL & Tab 2 is unlocked
             await page.click('[data-tab="admin"]');
             await page.waitForSelector('#admin-workspace:not(.hidden)');
             assert.equal((await page.textContent('#cfg-webhook-url')).trim(), `${env.baseUrl}/api/payment/webhook`);
+
+            // 3. Verify Remote Tunnel also cleanly enforces modal admin login when REQUIRE_AUTH=true
+            const savedTunnelAuth = process.env.REQUIRE_AUTH;
+            process.env.REQUIRE_AUTH = 'true';
+            try {
+                await page.reload({ waitUntil: 'networkidle' });
+                await page.waitForSelector('#open-login-btn:not(.hidden)');
+                await withTempAdminCredentials('RemoteTunnelPass_99', async (adminUser, tmpPass) => {
+                    await page.click('#open-login-btn');
+                    assert.equal(await page.isVisible('#demo-login-hint'), false);
+                    await page.fill('#login-user', adminUser);
+                    await page.fill('#login-pass', tmpPass);
+                    await page.click('#submit-login-btn');
+                    await page.waitForFunction(() => document.getElementById('auth-pill')?.textContent?.includes('Admin:'));
+                    await page.click('[data-tab="admin"]');
+                    await page.waitForSelector('#admin-workspace:not(.hidden)');
+                });
+            } finally {
+                if (savedTunnelAuth !== undefined) process.env.REQUIRE_AUTH = savedTunnelAuth;
+                else delete process.env.REQUIRE_AUTH;
+            }
 
             assert.deepEqual(badResponses, [], `Unexpected HTTP >= 400 responses: ${badResponses.join('; ')}`);
             assert.deepEqual(pageErrors, [], `Unexpected page errors: ${pageErrors.join('; ')}`);

@@ -39,17 +39,22 @@
     font-family: var(--font-sans);
 }
 
+html,
+body {
+    overflow-x: hidden;
+    max-width: 100%;
+}
+
 body {
     background-color: var(--bg-base);
     color: var(--text-main);
-    overflow-x: hidden;
     min-height: 100vh;
     position: relative;
 }
 
 /* Background Grid & Glow Orbs */
 .background-grid {
-    position: absolute;
+    position: fixed;
     top: 0;
     left: 0;
     width: 100%;
@@ -63,9 +68,9 @@ body {
 }
 
 .glow-orb {
-    position: absolute;
-    width: 400px;
-    height: 400px;
+    position: fixed;
+    width: min(400px, 80vw);
+    height: min(400px, 80vw);
     border-radius: 50%;
     filter: blur(140px);
     opacity: 0.15;
@@ -76,13 +81,13 @@ body {
 
 .orb-1 {
     top: -100px;
-    right: 10%;
+    right: 5%;
     background-color: var(--primary);
 }
 
 .orb-2 {
     bottom: -100px;
-    left: 10%;
+    left: 5%;
     background-color: var(--secondary);
     animation-delay: 6s;
 }
@@ -95,12 +100,24 @@ body {
 /* Layout Container */
 .app-container {
     max-width: 1400px;
+    width: 100%;
     margin: 0 auto;
     padding: 30px 20px;
     min-height: 100vh;
     display: flex;
     flex-direction: column;
     gap: 25px;
+    min-width: 0;
+}
+
+@media (max-width: 640px) {
+    .app-container {
+        padding: 16px 12px;
+        gap: 18px;
+    }
+    .app-header {
+        padding: 14px 16px;
+    }
 }
 
 /* App Header */
@@ -254,6 +271,8 @@ body {
     display: flex;
     flex-direction: column;
     gap: 25px;
+    min-width: 0;
+    max-width: 100%;
 }
 
 .top-row-grid {

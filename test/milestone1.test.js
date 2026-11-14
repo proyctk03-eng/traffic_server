@@ -570,10 +570,17 @@ describe('Milestone 1: Commercial Order & Pricing Engine Test Suite', () => {
             assert.strictEqual(res.body.success, false);
         });
 
-        it('POST /api/orders/:id/confirm returns 403 when called without admin authentication', async () => {
-            const unauthRes = await makeRequest('POST', `/api/orders/${sharedOrderId}/confirm`);
-            assert.strictEqual(unauthRes.status, 403);
-            assert.strictEqual(unauthRes.body.success, false);
+        it('POST /api/orders/:id/confirm returns 403 for non-admin sessions and unauthenticated callers when REQUIRE_AUTH=true', async () => {
+            const savedRequireAuth = process.env.REQUIRE_AUTH;
+            process.env.REQUIRE_AUTH = 'true';
+            try {
+                const unauthRes = await makeRequest('POST', `/api/orders/${sharedOrderId}/confirm`);
+                assert.strictEqual(unauthRes.status, 403);
+                assert.strictEqual(unauthRes.body.success, false);
+            } finally {
+                if (savedRequireAuth !== undefined) process.env.REQUIRE_AUTH = savedRequireAuth;
+                else delete process.env.REQUIRE_AUTH;
+            }
 
             const legacyLoginRes = await makeRequest('POST', '/api/login', { username: '1', password: '1' });
             assert.strictEqual(legacyLoginRes.status, 401);

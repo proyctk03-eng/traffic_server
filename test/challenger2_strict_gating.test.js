@@ -291,12 +291,19 @@ describe('Challenger 2: Strict Zero-Click Pre-Payment Gating & Auto-Activation',
         assert.strictEqual(getRes1.body.order.paymentStatus, 'pending_payment');
         assert.strictEqual(getRes1.body.order.campaignId, null);
 
-        // Step 2b: Verify unauthenticated /confirm is rejected with 403 and does not activate
-        const unauthConfirmRes = await apiCall('POST', `/api/orders/${orderId}/confirm`);
-        assert.strictEqual(unauthConfirmRes.status, 403);
-        assert.strictEqual(unauthConfirmRes.body.success, false);
-        assert.strictEqual(orderService.getOrder(orderId).status, 'pending_payment');
-        assert.strictEqual(orderService.getOrder(orderId).campaignId, null);
+        // Step 2b: Verify unauthenticated /confirm is rejected with 403 when REQUIRE_AUTH=true and does not activate
+        const savedRequireAuth = process.env.REQUIRE_AUTH;
+        process.env.REQUIRE_AUTH = 'true';
+        try {
+            const unauthConfirmRes = await apiCall('POST', `/api/orders/${orderId}/confirm`);
+            assert.strictEqual(unauthConfirmRes.status, 403);
+            assert.strictEqual(unauthConfirmRes.body.success, false);
+            assert.strictEqual(orderService.getOrder(orderId).status, 'pending_payment');
+            assert.strictEqual(orderService.getOrder(orderId).campaignId, null);
+        } finally {
+            if (savedRequireAuth !== undefined) process.env.REQUIRE_AUTH = savedRequireAuth;
+            else delete process.env.REQUIRE_AUTH;
+        }
 
         // Step 3: Confirm payment via POST /api/orders/:orderId/confirm with admin session
         const confirmRes = await apiCall('POST', `/api/orders/${orderId}/confirm`, null, { cookie: env.adminCookie });
