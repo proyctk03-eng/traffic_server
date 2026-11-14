@@ -21,6 +21,11 @@
             input.value = '';
         }
 
+        const socketPill = $('socket-pill');
+        if (socketPill) {
+            socketPill.classList.toggle('hidden', state.mode === 'demo');
+        }
+
         const canUseSameOrigin = !S.isStaticHostingEnv();
         if (sameBtn) sameBtn.classList.toggle('hidden', !canUseSameOrigin || state.mode === 'same-origin');
         if (demoBtn) demoBtn.classList.toggle('hidden', state.mode === 'demo');
@@ -89,8 +94,24 @@
             if (cHrateEl) cHrateEl.textContent = Number(pricing.hourlyRate || 2000).toLocaleString('vi-VN');
         }
 
-        const isAdmin = Boolean(authenticated && role === 'admin');
-        if (isAdmin) {
+        const authRequired = state.config.authRequired === true;
+        const isAdmin = !authRequired || Boolean(authenticated && role === 'admin');
+        const loginModal = $('login-modal');
+
+        if (!authRequired) {
+            if (authPill) authPill.classList.add('hidden');
+            if (loginBtn) loginBtn.classList.add('hidden');
+            if (logoutBtn) logoutBtn.classList.add('hidden');
+            if (gateBox) gateBox.classList.add('hidden');
+            if (adminWorkspace) adminWorkspace.classList.remove('hidden');
+            if (loginModal) loginModal.classList.remove('open');
+            if (pwBanner) {
+                pwBanner.classList.toggle('hidden', defaultPasswordWarning !== true);
+            }
+            if (typeof hooks.onAdminAuthenticated === 'function') {
+                hooks.onAdminAuthenticated();
+            }
+        } else if (isAdmin) {
             if (authPill) {
                 authPill.className = 'pill ok';
                 authPill.textContent = `Admin: ${username || 'admin'} (1 tài khoản)`;
@@ -112,7 +133,7 @@
             }
             if (loginBtn) {
                 loginBtn.classList.remove('hidden');
-                loginBtn.textContent = 'Đăng nhập Admin';
+                S.setButtonTextSafe(loginBtn, 'Đăng nhập Admin');
             }
             if (logoutBtn) logoutBtn.classList.add('hidden');
             if (gateBox) gateBox.classList.remove('hidden');
@@ -221,10 +242,10 @@
                 <td>${esc(restPercent)}%</td>
             </tr>`;
             if (footer) {
-                footer.innerHTML = `<button type="button" class="btn btn-sm" data-action="toggle-preview-slices">Hiển thị đủ ${allRows.length} khung giờ (đang gộp ${rest.length} khung cuối)</button>`;
+                footer.innerHTML = `<button type="button" class="btn btn-sm" data-action="toggle-preview-slices"><span class="btn-label">Hiển thị đủ ${allRows.length} khung giờ (đang gộp ${rest.length} khung cuối)</span></button>`;
             }
         } else if (allRows.length > S.COLLAPSED_PREVIEW_LIMIT && footer) {
-            footer.innerHTML = `<button type="button" class="btn btn-sm" data-action="toggle-preview-slices">Thu gọn về ${S.COLLAPSED_PREVIEW_LIMIT} khung giờ + tổng phần còn lại</button>`;
+            footer.innerHTML = `<button type="button" class="btn btn-sm" data-action="toggle-preview-slices"><span class="btn-label">Thu gọn về ${S.COLLAPSED_PREVIEW_LIMIT} khung giờ + tổng phần còn lại</span></button>`;
         }
 
         if (tbody) {
@@ -249,17 +270,17 @@
             return;
         }
         wrap.innerHTML = list.slice(0, 6).map(item => `
-            <div class="kv">
+            <div class="kv recent-order-row">
                 <div style="min-width:0; padding-right:8px;">
                     <code class="mono">${esc(item.orderId)}</code>
-                    <span class="pill" style="padding:1px 6px;font-size:11px;">${esc(item.orderCode || '')}</span>
+                    <span class="pill" style="padding:1px 7px;font-size:11px;">${esc(item.orderCode || '')}</span>
                     <div class="hint" style="margin:2px 0 0 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:300px;">
                         ${esc(item.targetUrl || '')}
                     </div>
                 </div>
-                <div style="display:flex; gap:4px; align-items:center; flex-shrink:0;">
-                    <button type="button" class="btn btn-sm" data-action="load-recent" data-id="${esc(item.orderId)}">Mở</button>
-                    <button type="button" class="btn btn-sm" data-action="del-recent" data-id="${esc(item.orderId)}">×</button>
+                <div style="display:flex; gap:5px; align-items:center; flex-shrink:0;">
+                    <button type="button" class="btn btn-sm" data-action="load-recent" data-id="${esc(item.orderId)}"><span class="btn-label">Mở</span></button>
+                    <button type="button" class="btn btn-sm" data-action="del-recent" data-id="${esc(item.orderId)}" aria-label="Xóa khỏi lịch sử">&times;</button>
                 </div>
             </div>
         `).join('');
@@ -309,10 +330,26 @@
         const isPaid = o.paymentStatus === 'paid';
         const isExpired = effectiveStatus === 'expired';
         const isDone = ['completed', 'expired', 'stopped'].includes(effectiveStatus);
-        const isAdmin = Boolean(state.config.authenticated && state.config.role === 'admin');
+        const isAdmin = state.config.authRequired !== true || Boolean(state.config.authenticated && state.config.role === 'admin');
 
         $('ao-id').textContent = o.orderId || '--';
         $('ao-code').textContent = o.orderCode || '--';
+
+        const trackUrl = S.buildTrackOrderUrl(o.orderId, state.mode, state.backendUrl);
+        const trackCardEl = $('ao-track-card');
+        const trackLinkEl = $('ao-track-link');
+        const trackOpenEl = $('ao-track-open-link');
+        if (trackCardEl) trackCardEl.classList.toggle('hidden', !trackUrl);
+        if (trackLinkEl) trackLinkEl.textContent = trackUrl || '--';
+        if (trackOpenEl) {
+            if (trackUrl) {
+                trackOpenEl.href = trackUrl;
+                trackOpenEl.classList.remove('hidden');
+            } else {
+                trackOpenEl.removeAttribute('href');
+                trackOpenEl.classList.add('hidden');
+            }
+        }
         $('ao-target').textContent = `${o.name ? o.name + ' — ' : ''}${o.targetUrl || ''}`;
         $('ao-proxy').textContent = o.proxyKeyMasked || '--';
         const schedLabel = o.scheduleMode === 'even' ? 'Even' : (o.scheduleMode === 'custom' ? 'Custom' : 'Smart');
@@ -478,10 +515,10 @@
                 </td>
                 <td>
                     <div style="display:flex; flex-wrap:wrap; gap:4px;">
-                        <button type="button" class="btn btn-sm" data-action="adm-view" data-id="${esc(o.orderId)}">Xem</button>
-                        ${(!isPaid && !isExpired) ? `<button type="button" class="btn btn-sm btn-success" data-action="adm-confirm" data-id="${esc(o.orderId)}">Duyệt</button>` : ''}
-                        ${canStop ? `<button type="button" class="btn btn-sm btn-danger" data-action="adm-stop" data-camp-id="${esc(o.campaignId)}">Dừng</button>` : ''}
-                        ${canDelete ? `<button type="button" class="btn btn-sm" data-action="adm-delete" data-id="${esc(o.orderId)}">Xóa</button>` : ''}
+                        <button type="button" class="btn btn-sm" data-action="adm-view" data-id="${esc(o.orderId)}"><span class="btn-label">Xem</span></button>
+                        ${(!isPaid && !isExpired) ? `<button type="button" class="btn btn-sm btn-success" data-action="adm-confirm" data-id="${esc(o.orderId)}"><span class="btn-label">Duyệt</span></button>` : ''}
+                        ${canStop ? `<button type="button" class="btn btn-sm btn-danger" data-action="adm-stop" data-camp-id="${esc(o.campaignId)}"><span class="btn-label">Dừng</span></button>` : ''}
+                        ${canDelete ? `<button type="button" class="btn btn-sm" data-action="adm-delete" data-id="${esc(o.orderId)}"><span class="btn-label">Xóa</span></button>` : ''}
                     </div>
                 </td>
             </tr>`;
@@ -506,8 +543,8 @@
                 <td>${Number(c.successVisits || 0).toLocaleString('vi-VN')} / ${Number(c.targetLimit || 0).toLocaleString('vi-VN')}<div class="hint" style="margin:2px 0 0 0;">Err: ${Number(c.failedVisits || 0).toLocaleString('vi-VN')}</div></td>
                 <td>
                     <div style="display:flex; flex-wrap:wrap; gap:4px;">
-                        ${canStop ? `<button type="button" class="btn btn-sm btn-danger" data-action="camp-stop" data-id="${esc(c.id)}">Dừng</button>` : ''}
-                        <button type="button" class="btn btn-sm" data-action="camp-reset" data-id="${esc(c.id)}">Reset</button>
+                        ${canStop ? `<button type="button" class="btn btn-sm btn-danger" data-action="camp-stop" data-id="${esc(c.id)}"><span class="btn-label">Dừng</span></button>` : ''}
+                        <button type="button" class="btn btn-sm" data-action="camp-reset" data-id="${esc(c.id)}"><span class="btn-label">Reset</span></button>
                     </div>
                 </td>
             </tr>`;

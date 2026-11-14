@@ -357,14 +357,83 @@
         }
     }
 
+    function getButtonLabelTarget(btn) {
+        if (!btn || typeof btn.querySelector !== 'function') return null;
+        return btn.querySelector('.btn-label, [data-btn-label]') || null;
+    }
+
+    function setButtonTextSafe(btn, text) {
+        if (!btn) return;
+        const target = getButtonLabelTarget(btn);
+        if (target) {
+            target.textContent = text;
+        } else {
+            btn.textContent = text;
+        }
+    }
+
+    function setButtonLoading(btn, isLoading, loadingText) {
+        if (!btn) return;
+        const target = getButtonLabelTarget(btn);
+        if (isLoading) {
+            if (btn.dataset.origLabel === undefined) {
+                btn.dataset.origLabel = target ? target.textContent : btn.textContent;
+            }
+            btn.disabled = true;
+            btn.classList.add('is-loading');
+            btn.setAttribute('aria-busy', 'true');
+            if (loadingText) {
+                setButtonTextSafe(btn, loadingText);
+            }
+        } else {
+            btn.disabled = false;
+            btn.classList.remove('is-loading');
+            btn.removeAttribute('aria-busy');
+            if (btn.dataset.origLabel !== undefined) {
+                setButtonTextSafe(btn, btn.dataset.origLabel);
+                delete btn.dataset.origLabel;
+            }
+        }
+    }
+
+    function buildTrackOrderUrl(orderId, mode, backendUrl) {
+        const cleanId = String(orderId || '').trim();
+        if (!cleanId) return '';
+        const encoded = encodeURIComponent(cleanId);
+        if (mode === 'remote' && backendUrl) {
+            return `${backendUrl}/track.html?orderId=${encoded}`;
+        }
+        if (mode === 'demo') {
+            try {
+                const u = new URL(global.location.href);
+                u.searchParams.set('orderId', cleanId);
+                u.searchParams.delete('order');
+                return u.toString();
+            } catch (e) {
+                return `?orderId=${encoded}`;
+            }
+        }
+        const origin = (global.location && global.location.origin) ? global.location.origin : '';
+        return `${origin}/track.html?orderId=${encoded}`;
+    }
+
     function copyText(text, btn) {
         if (!text || text === '--') return;
         const flash = (label) => {
             if (!btn) return;
-            const prev = btn.dataset.origLabel || btn.textContent;
-            btn.dataset.origLabel = prev;
-            btn.textContent = label;
-            setTimeout(() => { btn.textContent = prev; }, 1200);
+            const target = getButtonLabelTarget(btn);
+            const currentText = target ? target.textContent : btn.textContent;
+            const prev = btn.dataset.copyOrigLabel || currentText;
+            btn.dataset.copyOrigLabel = prev;
+            if (btn._copyTimer) clearTimeout(btn._copyTimer);
+            setButtonTextSafe(btn, label);
+            btn.classList.add('is-copied');
+            btn._copyTimer = setTimeout(() => {
+                setButtonTextSafe(btn, prev);
+                btn.classList.remove('is-copied');
+                delete btn.dataset.copyOrigLabel;
+                btn._copyTimer = null;
+            }, 1200);
         };
         if (global.navigator && global.navigator.clipboard && global.navigator.clipboard.writeText) {
             global.navigator.clipboard.writeText(text)
@@ -407,6 +476,10 @@
         buildOrderReportText,
         buildOrderCsvContent,
         downloadBlobFile,
+        getButtonLabelTarget,
+        setButtonTextSafe,
+        setButtonLoading,
+        buildTrackOrderUrl,
         copyText
     };
 })(window);

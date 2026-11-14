@@ -20,7 +20,7 @@
 
     function getDefaultDemoDb() {
         return {
-            auth: { authenticated: false, role: null, username: null },
+            auth: { authenticated: true, role: 'admin', username: 'admin' },
             bankInfo: {
                 bankId: 'MB',
                 bankName: 'MBBank',
@@ -30,6 +30,12 @@
                 webhookSecret: ''
             },
             proxyConfig: { region: 'random', keys: ['K_DEMO_KEY_SAMPLE_01'], cooldownSec: 14 },
+            telegramConfig: {
+                botToken: '',
+                chatIds: [],
+                notifyOnComplete: true,
+                sendFileReport: true
+            },
             orders: [],
             campaigns: [],
             nextOrderSeq: 1001,
@@ -38,10 +44,9 @@
     }
 
     function sanitizeAuthState(db) {
-        if (!db.auth || !db.auth.authenticated || db.auth.role !== 'admin') {
-            const changed = Boolean(db.auth && (db.auth.authenticated || db.auth.role || db.auth.username));
-            db.auth = { authenticated: false, role: null, username: null };
-            return changed;
+        if (!db.auth || db.auth.authenticated !== true || db.auth.role !== 'admin' || !db.auth.username) {
+            db.auth = { authenticated: true, role: 'admin', username: 'admin' };
+            return true;
         }
         return false;
     }
@@ -249,9 +254,10 @@
         if (path === '/api/public-config' && method === 'GET') {
             return demoJsonRes(200, {
                 success: true,
-                authenticated: isAdmin,
-                role: isAdmin ? 'admin' : null,
-                username: isAdmin ? (db.auth.username || 'admin') : null,
+                authRequired: false,
+                authenticated: true,
+                role: 'admin',
+                username: (db.auth && db.auth.username) || 'admin',
                 singleAccountMode: true,
                 guestEnabled: false,
                 orderExpireMinutes: S.ORDER_EXPIRE_MINUTES,
@@ -281,7 +287,7 @@
         }
 
         if (path === '/api/logout' && method === 'POST') {
-            db.auth = { authenticated: false, role: null, username: null };
+            db.auth = { authenticated: true, role: 'admin', username: 'admin' };
             saveDemoDb(db);
             return demoJsonRes(200, { success: true });
         }
@@ -529,6 +535,45 @@
             };
             saveDemoDb(db);
             return demoJsonRes(200, { success: true, message: `[Static Demo] Đã lưu ${db.proxyConfig.keys.length} proxy key mô phỏng.` });
+        }
+
+        if (path === '/api/admin/telegram' && method === 'GET') {
+            const tg = db.telegramConfig || {};
+            const token = String(tg.botToken || '');
+            const masked = token.length > 8 ? `${token.slice(0, 4)}...${token.slice(-4)}` : (token ? '****' : '');
+            return demoJsonRes(200, {
+                success: true,
+                config: {
+                    botTokenConfigured: Boolean(token),
+                    botTokenMasked: masked,
+                    chatIds: Array.isArray(tg.chatIds) ? tg.chatIds : [],
+                    notifyOnComplete: tg.notifyOnComplete !== false,
+                    sendFileReport: tg.sendFileReport !== false
+                }
+            });
+        }
+
+        if (path === '/api/admin/telegram' && method === 'POST') {
+            const tg = Object.assign({ botToken: '', chatIds: [], notifyOnComplete: true, sendFileReport: true }, db.telegramConfig || {});
+            if (typeof body.botToken === 'string' && body.botToken.trim()) {
+                tg.botToken = body.botToken.trim();
+            }
+            if (Array.isArray(body.chatIds)) {
+                tg.chatIds = body.chatIds.map(String).map(s => s.trim()).filter(Boolean);
+            }
+            if (typeof body.notifyOnComplete === 'boolean') tg.notifyOnComplete = body.notifyOnComplete;
+            if (typeof body.sendFileReport === 'boolean') tg.sendFileReport = body.sendFileReport;
+            db.telegramConfig = tg;
+            saveDemoDb(db);
+            return demoJsonRes(200, { success: true, message: '[Static Demo] Đã lưu cấu hình Telegram mô phỏng.' });
+        }
+
+        if (path === '/api/admin/telegram/test' && method === 'POST') {
+            const tg = db.telegramConfig || {};
+            if (!tg.botToken || !Array.isArray(tg.chatIds) || tg.chatIds.length === 0) {
+                return demoJsonRes(400, { success: false, message: 'Vui lòng nhập Bot Token và ít nhất 1 Chat ID để kiểm tra.' });
+            }
+            return demoJsonRes(200, { success: true, message: '[Static Demo] Đã mô phỏng gửi thông báo Telegram thành công.' });
         }
 
         return demoJsonRes(404, { success: false, message: 'Endpoint not mocked in Static Demo' });

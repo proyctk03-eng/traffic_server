@@ -15,9 +15,10 @@
         remoteHealthy: true,
         remoteHealthTimer: null,
         config: {
-            authenticated: false,
-            role: null,
-            username: null,
+            authRequired: false,
+            authenticated: true,
+            role: 'admin',
+            username: 'admin',
             defaultPasswordWarning: false,
             orderExpireMinutes: S.ORDER_EXPIRE_MINUTES,
             pricing: { clickRate: 40, hourlyRate: 2000, currency: 'VND' },
@@ -156,10 +157,29 @@
         }
     }
 
+    function isAdminActive() {
+        return state.config.authRequired !== true ||
+            Boolean(state.config.authenticated && state.config.role === 'admin');
+    }
+
+    function applyPublicConfigData(data) {
+        const normalized = Object.assign({}, data);
+        if (normalized.authRequired === undefined) {
+            normalized.authRequired = !(normalized.authenticated && normalized.role === 'admin');
+        }
+        if (normalized.authRequired === false) {
+            normalized.authenticated = true;
+            normalized.role = 'admin';
+            normalized.username = normalized.username || 'admin';
+            normalized.defaultPasswordWarning = false;
+        }
+        state.config = normalized;
+    }
+
     Demo.configure({
         isDemoMode: () => state.mode === 'demo',
         getActiveOrderId: () => state.activeOrderId,
-        isAdmin: () => Boolean(state.config.authenticated && state.config.role === 'admin'),
+        isAdmin: () => isAdminActive(),
         onEmitLog: (campId, text, type) => emitLiveLogEntry({ campaignId: campId, text, type }),
         onOrderUpdated: (orderId) => fetchActiveOrder(orderId),
         onAdminUpdated: () => {
@@ -201,7 +221,7 @@
             try {
                 const { res, data } = await apiJson('/api/public-config');
                 if (res.ok && data && data.success) {
-                    state.config = data;
+                    applyPublicConfigData(data);
                     state.remoteConnectedOnce = true;
                     state.remoteHealthy = true;
                     UI.renderAuthState(state, authUiHooks);
@@ -214,7 +234,7 @@
         try {
             const { res, data } = await apiJson('/api/public-config');
             if (res.ok && data && data.success) {
-                state.config = data;
+                applyPublicConfigData(data);
             }
         } catch (e) {}
         UI.renderAuthState(state, authUiHooks);
@@ -222,6 +242,7 @@
     }
 
     function openLoginModal() {
+        if (state.config.authRequired !== true) return;
         S.showAlert('login-modal-msg', '');
         const demoHint = $('demo-login-hint');
         if (demoHint) {
@@ -260,7 +281,7 @@
             return;
         }
         const btn = $('submit-login-btn');
-        btn.disabled = true;
+        S.setButtonLoading(btn, true, 'Đang đăng nhập...');
         try {
             const loginHeaders = state.mode === 'remote' ? { 'X-Auth-Mode': 'bearer' } : {};
             const { res, data } = await apiJson('/api/login', {
@@ -289,7 +310,7 @@
         } catch (err) {
             S.showAlert('login-modal-msg', 'Lỗi kết nối máy chủ khi đăng nhập.', 'err');
         } finally {
-            btn.disabled = false;
+            S.setButtonLoading(btn, false);
         }
     }
 
@@ -358,7 +379,7 @@
         $('c-total').textContent = '0 VNĐ';
     }
 
-    async function updateCostAndDistribution() {
+    async function updateCostAndDistribution(opts = {}) {
         const rawClicks = $('f-clicks').value.trim();
         const rawHours = $('f-hours').value.trim();
         const targetClicks = Number(rawClicks);
@@ -368,6 +389,11 @@
         const customBlocks = mode === 'custom' ? getCustomBlocksFromUI() : null;
 
         $('custom-blocks-box').classList.toggle('hidden', mode !== 'custom');
+
+        if (opts && opts.expandPreview) {
+            const distCard = $('dist-preview-card');
+            if (distCard) distCard.open = true;
+        }
 
         const clicksOk = rawClicks !== '' && Number.isInteger(targetClicks) && targetClicks >= 1;
         const hoursOk = rawHours !== '' && Number.isFinite(durationHours) && durationHours > 0;
@@ -413,9 +439,9 @@
         UI.renderDistributionPreview({ targetClicks, durationHours, mode, customBlocks }, state);
     }
 
-    function scheduleCostRefresh() {
+    function scheduleCostRefresh(opts = {}) {
         clearTimeout(state.costDebounce);
-        state.costDebounce = setTimeout(updateCostAndDistribution, 140);
+        state.costDebounce = setTimeout(() => updateCostAndDistribution(opts), 140);
     }
 
     async function handleValidateProxyKey() {
@@ -430,10 +456,7 @@
             });
             return;
         }
-        if (btn) {
-            btn.disabled = true;
-            btn.textContent = 'Đang kiểm tra...';
-        }
+        S.setButtonLoading(btn, true, 'Đang kiểm tra...');
         try {
             const { res, data } = await apiJson('/api/proxy/validate', {
                 method: 'POST',
@@ -443,10 +466,7 @@
         } catch (err) {
             S.showAlert('proxy-validate-msg', 'Lỗi kết nối khi kiểm tra KiotProxy Key.', 'err');
         } finally {
-            if (btn) {
-                btn.disabled = false;
-                btn.textContent = 'Kiểm tra Key KiotProxy';
-            }
+            S.setButtonLoading(btn, false);
         }
     }
 
@@ -509,8 +529,7 @@
         };
 
         const btn = $('submit-order-btn');
-        btn.disabled = true;
-        btn.textContent = 'Đang tạo đơn & sinh VietQR...';
+        S.setButtonLoading(btn, true, 'Đang tạo đơn & sinh VietQR...');
 
         try {
             const { res, data } = await apiJson('/api/orders', {
@@ -527,8 +546,7 @@
         } catch (err) {
             S.showAlert('order-form-msg', 'Lỗi kết nối máy chủ khi tạo đơn.', 'err');
         } finally {
-            btn.disabled = false;
-            btn.textContent = 'Tạo đơn Boost & Lấy mã VietQR (Không cần tài khoản)';
+            S.setButtonLoading(btn, false);
         }
     }
 
@@ -591,7 +609,7 @@
         } catch (e) {}
     }
 
-    async function selectOrder(orderId) {
+    async function selectOrder(orderId, triggerBtn) {
         const cleanId = String(orderId || '').trim();
         if (!cleanId) {
             S.showAlert('lookup-order-msg', 'Vui lòng nhập mã đơn hàng cần tra cứu (ORD-...).', 'warn');
@@ -607,22 +625,32 @@
             delete wlog.dataset.campId;
         }
         stopOrderPolling();
-        const order = await fetchActiveOrder(cleanId);
-        if (order) {
-            if (state.socket && state.socket.connected) {
-                state.socket.emit('subscribe-order', order.orderId);
+        S.setButtonLoading(triggerBtn, true, 'Đang tải...');
+        let order = null;
+        try {
+            order = await fetchActiveOrder(cleanId);
+            if (order) {
+                if (state.socket && state.socket.connected) {
+                    state.socket.emit('subscribe-order', order.orderId);
+                }
+                const eff = S.getEffectiveOrderStatus(order);
+                if (!['completed', 'expired', 'stopped'].includes(eff)) {
+                    state.pollTimer = setInterval(() => fetchActiveOrder(), 3000);
+                }
             }
-            const eff = S.getEffectiveOrderStatus(order);
-            if (!['completed', 'expired', 'stopped'].includes(eff)) {
-                state.pollTimer = setInterval(() => fetchActiveOrder(), 3000);
-            }
+        } finally {
+            S.setButtonLoading(triggerBtn, false);
         }
         return order;
     }
 
-    async function fetchActiveOrder(targetOrderId) {
+    async function fetchActiveOrder(targetOrderId, triggerBtn) {
         const lookupId = String(targetOrderId || state.activeOrderId || '').trim();
         if (!lookupId) return null;
+        const loadingLabel = triggerBtn && triggerBtn.id === 'recheck-order-btn'
+            ? 'Đang kiểm tra...'
+            : 'Đang làm mới...';
+        S.setButtonLoading(triggerBtn, true, loadingLabel);
         try {
             const { res, data } = await apiJson('/api/orders/' + encodeURIComponent(lookupId));
             if (!res.ok || !data.success || !data.order) {
@@ -645,57 +673,78 @@
             return data.order;
         } catch (err) {
             return null;
+        } finally {
+            S.setButtonLoading(triggerBtn, false);
         }
     }
 
-    async function confirmOrderAsAdmin(orderId) {
+    async function confirmOrderAsAdmin(orderId, triggerBtn) {
         const isViewingOrder = state.activeOrderId === orderId;
         S.showAlert('adm-action-msg', '');
         if (isViewingOrder) S.showAlert('ao-notice', '');
-        const { res, data } = await apiJson('/api/orders/' + encodeURIComponent(orderId) + '/confirm', {
-            method: 'POST',
-            body: '{}'
-        });
-        if (!res.ok || !data.success) {
-            const msg = (data && data.message) || 'Không thể xác nhận đơn hàng.';
+        S.setButtonLoading(triggerBtn, true, 'Đang xác nhận...');
+        try {
+            const { res, data } = await apiJson('/api/orders/' + encodeURIComponent(orderId) + '/confirm', {
+                method: 'POST',
+                body: '{}'
+            });
+            if (!res.ok || !data.success) {
+                const msg = (data && data.message) || 'Không thể xác nhận đơn hàng.';
+                if (isViewingOrder) S.showAlert('ao-notice', msg, 'err');
+                S.showAlert('adm-action-msg', msg, 'err');
+                return false;
+            }
+            const okMsg = `Đã xác nhận thanh toán đơn ${data.orderId} -> Campaign ${data.campaignId} đang chạy.`;
+            S.showAlert('adm-action-msg', okMsg, 'ok');
+            if (isViewingOrder) {
+                S.showAlert('ao-notice', okMsg, 'ok');
+                if (state.activeOrder && data.campaignId) {
+                    state.activeOrder.campaignId = data.campaignId;
+                    state.activeOrder.paymentStatus = 'paid';
+                    UI.hydrateOrderWorkerLogs(data.campaignId, state.campaignLogs);
+                }
+                await fetchActiveOrder(orderId);
+            }
+            await Promise.all([loadAdminOrders(), loadAdminCampaigns()]);
+            return true;
+        } catch (err) {
+            const msg = 'Lỗi kết nối máy chủ khi xác nhận thanh toán.';
             if (isViewingOrder) S.showAlert('ao-notice', msg, 'err');
             S.showAlert('adm-action-msg', msg, 'err');
             return false;
+        } finally {
+            S.setButtonLoading(triggerBtn, false);
         }
-        const okMsg = `Đã xác nhận thanh toán đơn ${data.orderId} -> Campaign ${data.campaignId} đang chạy.`;
-        S.showAlert('adm-action-msg', okMsg, 'ok');
-        if (isViewingOrder) {
-            S.showAlert('ao-notice', okMsg, 'ok');
-            if (state.activeOrder && data.campaignId) {
-                state.activeOrder.campaignId = data.campaignId;
-                state.activeOrder.paymentStatus = 'paid';
-                UI.hydrateOrderWorkerLogs(data.campaignId, state.campaignLogs);
-            }
-            await fetchActiveOrder(orderId);
-        }
-        await Promise.all([loadAdminOrders(), loadAdminCampaigns()]);
-        return true;
     }
 
-    async function stopCampaignAsAdmin(campaignId) {
+    async function stopCampaignAsAdmin(campaignId, triggerBtn) {
         if (!campaignId) return;
         const activeCampId = state.activeOrder && ((state.activeOrder.progress && state.activeOrder.progress.campaignId) || state.activeOrder.campaignId);
         const isViewingCampaign = Boolean(activeCampId && String(activeCampId) === String(campaignId));
-        const { res, data } = await apiJson('/api/campaigns/' + encodeURIComponent(campaignId) + '/stop', {
-            method: 'POST',
-            body: '{}'
-        });
-        if (!res.ok || !data.success) {
-            const msg = (data && data.message) || 'Không thể dừng chiến dịch.';
+        S.setButtonLoading(triggerBtn, true, 'Đang dừng...');
+        try {
+            const { res, data } = await apiJson('/api/campaigns/' + encodeURIComponent(campaignId) + '/stop', {
+                method: 'POST',
+                body: '{}'
+            });
+            if (!res.ok || !data.success) {
+                const msg = (data && data.message) || 'Không thể dừng chiến dịch.';
+                if (isViewingCampaign) S.showAlert('ao-notice', msg, 'err');
+                S.showAlert('adm-action-msg', msg, 'err');
+                return;
+            }
+            const warnMsg = `Đã gửi lệnh dừng chiến dịch ${campaignId}.`;
+            S.showAlert('adm-action-msg', warnMsg, 'warn');
+            if (isViewingCampaign) S.showAlert('ao-notice', warnMsg, 'warn');
+            if (state.activeOrderId) await fetchActiveOrder();
+            await Promise.all([loadAdminOrders(), loadAdminCampaigns()]);
+        } catch (err) {
+            const msg = 'Lỗi kết nối máy chủ khi dừng chiến dịch.';
             if (isViewingCampaign) S.showAlert('ao-notice', msg, 'err');
             S.showAlert('adm-action-msg', msg, 'err');
-            return;
+        } finally {
+            S.setButtonLoading(triggerBtn, false);
         }
-        const warnMsg = `Đã gửi lệnh dừng chiến dịch ${campaignId}.`;
-        S.showAlert('adm-action-msg', warnMsg, 'warn');
-        if (isViewingCampaign) S.showAlert('ao-notice', warnMsg, 'warn');
-        if (state.activeOrderId) await fetchActiveOrder();
-        await Promise.all([loadAdminOrders(), loadAdminCampaigns()]);
     }
 
     function downloadActiveReport() {
@@ -714,7 +763,7 @@
 
     // ─── Admin Workspace (Single Admin Account) ───────────────────────────────
     async function loadAdminDashboard() {
-        if (!(state.config.authenticated && state.config.role === 'admin')) return;
+        if (!isAdminActive()) return;
         const whEl = $('cfg-webhook-url');
         if (whEl) {
             whEl.textContent = state.mode === 'demo'
@@ -734,7 +783,7 @@
     }
 
     async function loadAdminCampaigns() {
-        if (!(state.config.authenticated && state.config.role === 'admin')) return;
+        if (!isAdminActive()) return;
         try {
             const { res, data } = await apiJson('/api/campaigns');
             if (!res.ok || !data.success) return;
@@ -743,23 +792,30 @@
         } catch (e) {}
     }
 
-    async function resetCampaignStatsAsAdmin(campaignId) {
+    async function resetCampaignStatsAsAdmin(campaignId, triggerBtn) {
         if (!campaignId) return;
-        const { res, data } = await apiJson('/api/campaigns/' + encodeURIComponent(campaignId) + '/reset-stats', {
-            method: 'POST',
-            body: '{}'
-        });
-        if (!res.ok || !data.success) {
-            S.showAlert('adm-camp-msg', (data && data.message) || 'Không thể reset thống kê chiến dịch.', 'err');
-            return;
+        S.setButtonLoading(triggerBtn, true, 'Đang reset...');
+        try {
+            const { res, data } = await apiJson('/api/campaigns/' + encodeURIComponent(campaignId) + '/reset-stats', {
+                method: 'POST',
+                body: '{}'
+            });
+            if (!res.ok || !data.success) {
+                S.showAlert('adm-camp-msg', (data && data.message) || 'Không thể reset thống kê chiến dịch.', 'err');
+                return;
+            }
+            S.showAlert('adm-camp-msg', `Đã reset thống kê chiến dịch ${campaignId}.`, 'ok');
+            if (state.activeOrderId) await fetchActiveOrder();
+            await Promise.all([loadAdminOrders(), loadAdminCampaigns()]);
+        } catch (err) {
+            S.showAlert('adm-camp-msg', 'Lỗi kết nối máy chủ khi reset thống kê.', 'err');
+        } finally {
+            S.setButtonLoading(triggerBtn, false);
         }
-        S.showAlert('adm-camp-msg', `Đã reset thống kê chiến dịch ${campaignId}.`, 'ok');
-        if (state.activeOrderId) await fetchActiveOrder();
-        await Promise.all([loadAdminOrders(), loadAdminCampaigns()]);
     }
 
     async function loadAdminOrders() {
-        if (!(state.config.authenticated && state.config.role === 'admin')) return;
+        if (!isAdminActive()) return;
         try {
             const { res, data } = await apiJson('/api/admin/orders');
             if (!res.ok || !data.success) return;
@@ -792,24 +848,32 @@
     async function handlePaymentConfigSubmit(e) {
         e.preventDefault();
         S.showAlert('adm-paycfg-msg', '');
-        const payload = {
-            bankId: $('cfg-bankid').value.trim(),
-            bankName: $('cfg-bankname').value.trim(),
-            accountNumber: $('cfg-accnum').value.trim(),
-            accountName: $('cfg-accname').value.trim(),
-            template: $('cfg-template').value,
-            webhookSecret: $('cfg-secret').value.trim()
-        };
-        const { res, data } = await apiJson('/api/admin/payment-config', {
-            method: 'POST',
-            body: JSON.stringify(payload)
-        });
-        if (!res.ok || !data.success) {
-            S.showAlert('adm-paycfg-msg', (data && data.message) || 'Lỗi lưu cấu hình VietQR.', 'err');
-            return;
+        const btn = e.target && e.target.querySelector ? e.target.querySelector('button[type="submit"]') : null;
+        S.setButtonLoading(btn, true, 'Đang lưu...');
+        try {
+            const payload = {
+                bankId: $('cfg-bankid').value.trim(),
+                bankName: $('cfg-bankname').value.trim(),
+                accountNumber: $('cfg-accnum').value.trim(),
+                accountName: $('cfg-accname').value.trim(),
+                template: $('cfg-template').value,
+                webhookSecret: $('cfg-secret').value.trim()
+            };
+            const { res, data } = await apiJson('/api/admin/payment-config', {
+                method: 'POST',
+                body: JSON.stringify(payload)
+            });
+            if (!res.ok || !data.success) {
+                S.showAlert('adm-paycfg-msg', (data && data.message) || 'Lỗi lưu cấu hình VietQR.', 'err');
+                return;
+            }
+            S.showAlert('adm-paycfg-msg', 'Đã lưu cấu hình VietQR & Webhook.', 'ok');
+            await refreshPublicConfig();
+        } catch (err) {
+            S.showAlert('adm-paycfg-msg', 'Lỗi kết nối máy chủ khi lưu cấu hình VietQR.', 'err');
+        } finally {
+            S.setButtonLoading(btn, false);
         }
-        S.showAlert('adm-paycfg-msg', 'Đã lưu cấu hình VietQR & Webhook.', 'ok');
-        await refreshPublicConfig();
     }
 
     async function loadAdminProxyConfig() {
@@ -826,21 +890,29 @@
     async function handleProxyConfigSubmit(e) {
         e.preventDefault();
         S.showAlert('adm-proxycfg-msg', '');
-        const keys = $('pcfg-keys').value
-            .split(/[\r\n,]+/)
-            .map(s => s.trim())
-            .filter(Boolean);
-        const cooldownSec = Number($('pcfg-cooldown').value);
-        const region = $('pcfg-region').value || 'random';
-        const { res, data } = await apiJson('/api/proxy-config', {
-            method: 'POST',
-            body: JSON.stringify({ region, keys, cooldownSec: Number.isFinite(cooldownSec) ? cooldownSec : 14 })
-        });
-        if (!res.ok || !data.success) {
-            S.showAlert('adm-proxycfg-msg', (data && data.message) || 'Lỗi lưu Proxy Pool.', 'err');
-            return;
+        const btn = e.target && e.target.querySelector ? e.target.querySelector('button[type="submit"]') : null;
+        S.setButtonLoading(btn, true, 'Đang lưu...');
+        try {
+            const keys = $('pcfg-keys').value
+                .split(/[\r\n,]+/)
+                .map(s => s.trim())
+                .filter(Boolean);
+            const cooldownSec = Number($('pcfg-cooldown').value);
+            const region = $('pcfg-region').value || 'random';
+            const { res, data } = await apiJson('/api/proxy-config', {
+                method: 'POST',
+                body: JSON.stringify({ region, keys, cooldownSec: Number.isFinite(cooldownSec) ? cooldownSec : 14 })
+            });
+            if (!res.ok || !data.success) {
+                S.showAlert('adm-proxycfg-msg', (data && data.message) || 'Lỗi lưu Proxy Pool.', 'err');
+                return;
+            }
+            S.showAlert('adm-proxycfg-msg', data.message || 'Đã lưu Proxy Pool.', 'ok');
+        } catch (err) {
+            S.showAlert('adm-proxycfg-msg', 'Lỗi kết nối máy chủ khi lưu Proxy Pool.', 'err');
+        } finally {
+            S.setButtonLoading(btn, false);
         }
-        S.showAlert('adm-proxycfg-msg', data.message || 'Đã lưu Proxy Pool.', 'ok');
     }
 
     // ─── Socket.IO Integration ────────────────────────────────────────────────
@@ -873,7 +945,7 @@
             state.socket = null;
         }
         if (state.mode === 'demo') {
-            $('socket-pill').className = 'pill warn';
+            $('socket-pill').className = 'pill warn hidden';
             $('socket-pill').textContent = 'Demo: Giả lập trình duyệt';
             return;
         }
@@ -933,6 +1005,9 @@
         });
 
         socket.on('user-info', (info) => {
+            if (state.config.authRequired === false) {
+                return;
+            }
             const prevAuth = state.config.authenticated;
             const prevRole = state.config.role;
             if (info && info.role === 'admin') {
@@ -959,7 +1034,7 @@
                 }
                 fetchActiveOrder();
             }
-            if (state.config.role === 'admin') {
+            if (isAdminActive()) {
                 loadAdminOrders();
                 loadAdminCampaigns();
             }
@@ -981,24 +1056,24 @@
         });
 
         socket.on('orders-updated', () => {
-            if (state.config.role === 'admin') {
+            if (isAdminActive()) {
                 loadAdminOrders();
                 loadAdminCampaigns();
             }
         });
 
         socket.on('status-update', () => {
-            if (state.config.role === 'admin') loadAdminCampaigns();
+            if (isAdminActive()) loadAdminCampaigns();
         });
 
         socket.on('campaign-deleted', () => {
-            if (state.config.role === 'admin') loadAdminCampaigns();
+            if (isAdminActive()) loadAdminCampaigns();
         });
 
         socket.on('log', (entry) => emitLiveLogEntry(entry));
 
         socket.on('stats-update', (st) => {
-            if (state.config.role === 'admin' && st) {
+            if (isAdminActive() && st) {
                 const rowOrder = state.adminOrders.find(o => o.campaignId && String(o.campaignId) === String(st.campaignId));
                 if (rowOrder) {
                     rowOrder.effectiveStatus = st.status;
@@ -1026,7 +1101,7 @@
         await initSocket();
     }
 
-    async function applyRuntimeMode(nextMode, rawBackendUrl = '') {
+    async function applyRuntimeMode(nextMode, rawBackendUrl = '', triggerBtn = null) {
         S.showAlert('runtime-conn-msg', '');
         stopRemoteHealthMonitor();
         state.remoteConnectedOnce = false;
@@ -1043,28 +1118,37 @@
             const cleanUrl = S.normalizeBackendUrl(rawBackendUrl);
             if (!cleanUrl) {
                 S.showAlert('runtime-conn-msg', 'URL Backend Tunnel không hợp lệ (cần bắt đầu bằng https:// hoặc http://).', 'err');
+                const connDetails = $('runtime-conn-details');
+                if (connDetails && triggerBtn) connDetails.open = true;
                 return false;
             }
-            state.mode = 'remote';
-            state.backendUrl = cleanUrl;
-            state.bearerToken = S.loadSavedRemoteToken(cleanUrl);
+            S.setButtonLoading(triggerBtn, true, 'Đang kết nối...');
             try {
-                localStorage.setItem(S.STORAGE_KEYS.REMOTE_BACKEND, cleanUrl);
-                localStorage.removeItem(S.STORAGE_KEYS.PREFER_DEMO);
-            } catch (e) {}
-            UI.renderRuntimeModeUI(state);
-            const ok = await refreshPublicConfig();
-            if (!ok) {
-                state.remoteHealthy = false;
+                state.mode = 'remote';
+                state.backendUrl = cleanUrl;
+                state.bearerToken = S.loadSavedRemoteToken(cleanUrl);
+                try {
+                    localStorage.setItem(S.STORAGE_KEYS.REMOTE_BACKEND, cleanUrl);
+                    localStorage.removeItem(S.STORAGE_KEYS.PREFER_DEMO);
+                } catch (e) {}
                 UI.renderRuntimeModeUI(state);
-                S.showAlert('runtime-conn-msg', `Không kết nối được Backend tại ${cleanUrl}. Hãy kiểm tra server + Cloudflare Tunnel đang chạy, hoặc bấm "Chế độ Demo tĩnh".`, 'err');
+                const ok = await refreshPublicConfig();
+                if (!ok) {
+                    state.remoteHealthy = false;
+                    UI.renderRuntimeModeUI(state);
+                    S.showAlert('runtime-conn-msg', `Không kết nối được Backend tại ${cleanUrl}. Hãy kiểm tra server + Cloudflare Tunnel đang chạy, hoặc bấm "Chế độ Demo tĩnh".`, 'err');
+                    const connDetails = $('runtime-conn-details');
+                    if (connDetails && triggerBtn) connDetails.open = true;
+                    await initSocket();
+                    return false;
+                }
                 await initSocket();
-                return false;
+                S.showAlert('runtime-conn-msg', `Đã kết nối Backend thật tại ${cleanUrl}.`, 'ok');
+                await updateCostAndDistribution();
+                return true;
+            } finally {
+                S.setButtonLoading(triggerBtn, false);
             }
-            await initSocket();
-            S.showAlert('runtime-conn-msg', `Đã kết nối Backend thật tại ${cleanUrl}.`, 'ok');
-            await updateCostAndDistribution();
-            return true;
         }
 
         if (nextMode === 'demo') {
@@ -1103,7 +1187,7 @@
         });
         $('tab-customer').classList.toggle('hidden', state.activeTab !== 'customer');
         $('tab-admin').classList.toggle('hidden', state.activeTab !== 'admin');
-        if (state.activeTab === 'admin' && state.config.role === 'admin') {
+        if (state.activeTab === 'admin' && isAdminActive()) {
             loadAdminDashboard();
         }
     }
@@ -1114,12 +1198,12 @@
         });
 
         $('connect-backend-btn').addEventListener('click', () => {
-            applyRuntimeMode('remote', $('backend-url-input').value);
+            applyRuntimeMode('remote', $('backend-url-input').value, $('connect-backend-btn'));
         });
         $('backend-url-input').addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
                 e.preventDefault();
-                applyRuntimeMode('remote', $('backend-url-input').value);
+                applyRuntimeMode('remote', $('backend-url-input').value, $('connect-backend-btn'));
             }
         });
         $('copy-backend-link-btn').addEventListener('click', () => {
@@ -1146,17 +1230,17 @@
         document.querySelectorAll('.preset-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 $('f-hours').value = btn.dataset.hours;
-                updateCostAndDistribution();
+                updateCostAndDistribution({ expandPreview: true });
             });
         });
 
         ['f-clicks', 'f-hours'].forEach(id => {
-            $(id).addEventListener('input', scheduleCostRefresh);
-            $(id).addEventListener('change', updateCostAndDistribution);
+            $(id).addEventListener('input', () => scheduleCostRefresh({ expandPreview: true }));
+            $(id).addEventListener('change', () => updateCostAndDistribution({ expandPreview: true }));
         });
-        $('f-schedule').addEventListener('change', updateCostAndDistribution);
+        $('f-schedule').addEventListener('change', () => updateCostAndDistribution({ expandPreview: true }));
         ['cb-night', 'cb-early', 'cb-morn', 'cb-noon', 'cb-after', 'cb-eve', 'cb-late'].forEach(id => {
-            $(id).addEventListener('change', updateCostAndDistribution);
+            $(id).addEventListener('change', () => updateCostAndDistribution({ expandPreview: true }));
         });
         $('dist-preview-footer').addEventListener('click', (e) => {
             const btn = e.target.closest('button[data-action="toggle-preview-slices"]');
@@ -1176,12 +1260,12 @@
         $('boost-form').addEventListener('submit', handleOrderSubmit);
 
         $('lookup-order-btn').addEventListener('click', () => {
-            selectOrder($('lookup-order-id').value);
+            selectOrder($('lookup-order-id').value, $('lookup-order-btn'));
         });
         $('lookup-order-id').addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
                 e.preventDefault();
-                selectOrder($('lookup-order-id').value);
+                selectOrder($('lookup-order-id').value, $('lookup-order-btn'));
             }
         });
 
@@ -1189,25 +1273,29 @@
             const btn = e.target.closest('button[data-action]');
             if (!btn) return;
             const id = btn.dataset.id;
-            if (btn.dataset.action === 'load-recent') selectOrder(id);
+            if (btn.dataset.action === 'load-recent') selectOrder(id, btn);
             if (btn.dataset.action === 'del-recent') removeRecentOrder(id);
         });
 
-        $('recheck-order-btn').addEventListener('click', () => fetchActiveOrder());
-        $('refresh-order-btn').addEventListener('click', () => fetchActiveOrder());
+        $('recheck-order-btn').addEventListener('click', () => fetchActiveOrder(null, $('recheck-order-btn')));
+        $('refresh-order-btn').addEventListener('click', () => fetchActiveOrder(null, $('refresh-order-btn')));
         $('download-report-btn').addEventListener('click', downloadActiveReport);
         $('download-csv-btn').addEventListener('click', downloadActiveCsv);
 
         $('copy-acc-btn').addEventListener('click', () => S.copyText($('ao-acc-num').textContent, $('copy-acc-btn')));
         $('copy-amt-btn').addEventListener('click', () => S.copyText(String((state.activeOrder && state.activeOrder.totalAmount) || ''), $('copy-amt-btn')));
         $('copy-memo-btn').addEventListener('click', () => S.copyText($('ao-memo').textContent, $('copy-memo-btn')));
+        $('copy-track-link-btn').addEventListener('click', () => {
+            const url = S.buildTrackOrderUrl(state.activeOrderId, state.mode, state.backendUrl);
+            if (url) S.copyText(url, $('copy-track-link-btn'));
+        });
 
         $('inline-admin-confirm-btn').addEventListener('click', () => {
-            if (state.activeOrderId) confirmOrderAsAdmin(state.activeOrderId);
+            if (state.activeOrderId) confirmOrderAsAdmin(state.activeOrderId, $('inline-admin-confirm-btn'));
         });
         $('inline-admin-stop-btn').addEventListener('click', () => {
             const campId = state.activeOrder && ((state.activeOrder.progress && state.activeOrder.progress.campaignId) || state.activeOrder.campaignId);
-            if (campId) stopCampaignAsAdmin(campId);
+            if (campId) stopCampaignAsAdmin(campId, $('inline-admin-stop-btn'));
         });
 
         $('open-login-btn').addEventListener('click', openLoginModal);
@@ -1220,8 +1308,16 @@
         $('logout-btn').addEventListener('click', handleLogout);
 
         $('adm-filter').addEventListener('change', () => UI.renderAdminOrdersTable(state));
-        $('adm-refresh-orders-btn').addEventListener('click', loadAdminOrders);
-        $('adm-refresh-campaigns-btn').addEventListener('click', loadAdminCampaigns);
+        $('adm-refresh-orders-btn').addEventListener('click', async () => {
+            const btn = $('adm-refresh-orders-btn');
+            S.setButtonLoading(btn, true, 'Đang tải...');
+            try { await loadAdminOrders(); } finally { S.setButtonLoading(btn, false); }
+        });
+        $('adm-refresh-campaigns-btn').addEventListener('click', async () => {
+            const btn = $('adm-refresh-campaigns-btn');
+            S.setButtonLoading(btn, true, 'Đang tải...');
+            try { await loadAdminCampaigns(); } finally { S.setButtonLoading(btn, false); }
+        });
         $('adm-paycfg-form').addEventListener('submit', handlePaymentConfigSubmit);
         $('adm-proxycfg-form').addEventListener('submit', handleProxyConfigSubmit);
         $('clear-global-log-btn').addEventListener('click', () => { $('adm-global-log').innerHTML = ''; });
@@ -1232,9 +1328,9 @@
             const action = btn.dataset.action;
             const id = btn.dataset.id;
             if (action === 'camp-stop' && id) {
-                await stopCampaignAsAdmin(id);
+                await stopCampaignAsAdmin(id, btn);
             } else if (action === 'camp-reset' && id) {
-                await resetCampaignStatsAsAdmin(id);
+                await resetCampaignStatsAsAdmin(id, btn);
             }
         });
 
@@ -1246,22 +1342,29 @@
             const campId = btn.dataset.campId;
             if (action === 'adm-view' && id) {
                 switchTab('customer');
-                await selectOrder(id);
+                await selectOrder(id, btn);
             } else if (action === 'adm-confirm' && id) {
-                await confirmOrderAsAdmin(id);
+                await confirmOrderAsAdmin(id, btn);
             } else if (action === 'adm-stop' && campId) {
-                await stopCampaignAsAdmin(campId);
+                await stopCampaignAsAdmin(campId, btn);
             } else if (action === 'adm-delete' && id) {
-                const { res, data } = await apiJson('/api/admin/orders/' + encodeURIComponent(id), { method: 'DELETE' });
-                if (!res.ok || !data.success) {
-                    S.showAlert('adm-action-msg', (data && data.message) || 'Không thể xóa đơn.', 'err');
-                } else {
-                    S.showAlert('adm-action-msg', `Đã xóa đơn ${id}.`, 'ok');
-                    removeRecentOrder(id);
-                    if (state.activeOrderId === id) {
-                        clearActiveOrderView();
+                S.setButtonLoading(btn, true, 'Đang xóa...');
+                try {
+                    const { res, data } = await apiJson('/api/admin/orders/' + encodeURIComponent(id), { method: 'DELETE' });
+                    if (!res.ok || !data.success) {
+                        S.showAlert('adm-action-msg', (data && data.message) || 'Không thể xóa đơn.', 'err');
+                    } else {
+                        S.showAlert('adm-action-msg', `Đã xóa đơn ${id}.`, 'ok');
+                        removeRecentOrder(id);
+                        if (state.activeOrderId === id) {
+                            clearActiveOrderView();
+                        }
+                        await Promise.all([loadAdminOrders(), loadAdminCampaigns()]);
                     }
-                    await Promise.all([loadAdminOrders(), loadAdminCampaigns()]);
+                } catch (err) {
+                    S.showAlert('adm-action-msg', 'Lỗi kết nối khi xóa đơn.', 'err');
+                } finally {
+                    S.setButtonLoading(btn, false);
                 }
             }
         });
