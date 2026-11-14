@@ -40,6 +40,10 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
+      - name: Install dependencies
+        if: steps.check_cf.outputs.ready == 'true'
+        run: npm ci --omit=dev
+
       - name: Build static demo bundle
         if: steps.check_cf.outputs.ready == 'true'
         run: npm run build:demo
