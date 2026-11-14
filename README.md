@@ -1,11 +1,34 @@
 # Traffic Server & Web Demo (`/boost`)
 
-Ứng dụng Node.js (Express + Socket.IO) quản lý chiến dịch điều phối traffic theo phân bố thời gian, kèm web demo đặt đơn / thanh toán / theo dõi trực tiếp không cần đăng ký tài khoản tại `/boost`.
+Ứng dụng Node.js (Express + Socket.IO) điều phối chiến dịch traffic HTTP theo phân bố thời gian chuẩn Việt Nam (`UTC+7`), kèm giao diện Dark Mode 1 màn hình tại `/boost` cho phép mở vào dùng ngay không cần đăng nhập.
 
 Hỗ trợ đầy đủ **3 chế độ chạy**:
-1. **Live Backend (Same-Origin):** Chạy trực tiếp trên `node server.js` (`http://localhost:3005/boost`) với toàn bộ tính năng thật (VietQR, Webhook, KiotProxy, Admin 1 tài khoản).
-2. **Static Demo Fallback (24/7 trên GitHub Pages / Cloudflare Pages):** Tự động chạy giao diện `/boost` độc lập trên trình duyệt (tính giá, chia lịch Smart/Even/Custom, tạo mã VietQR, mô phỏng duyệt đơn & tiến độ bằng `localStorage`) khi không có server backend online.
-3. **Remote Tunnel (`Cloudflare Quick Tunnel` / `Cloudflare Named Tunnel`):** Nối trực tiếp giao diện static trên GitHub Pages / Cloudflare Pages với server Node.js thật qua URL `https://*.trycloudflare.com` hoặc domain riêng của bạn (CORS + Bearer Token + Socket.IO).
+1. **Live Backend (Same-Origin):** Chạy trực tiếp trên `node server.js` (`http://localhost:3005/boost`) với toàn bộ tính năng thật (hẹn giờ chạy theo ngày/khung giờ VN, KiotProxy, Socket.IO real-time, theo dõi tại `/track.html`).
+2. **Static Demo Fallback (24/7 trên Cloudflare Pages / GitHub Pages):** Tự động chạy giao diện `/boost` độc lập trên trình duyệt (chia lịch Smart/Even/Custom, hẹn ngày & khung giờ VN, mô phỏng tiến độ bằng `localStorage`) khi không có server backend online.
+3. **Remote Tunnel (`Cloudflare Quick Tunnel` / `Cloudflare Named Tunnel`):** Nối trực tiếp giao diện static trên Cloudflare Pages / GitHub Pages với server Node.js thật qua URL `https://*.trycloudflare.com` hoặc domain riêng (CORS + Bearer Token + Socket.IO).
+
+## Tính năng chính hiện tại (`/boost` & `/track.html`)
+
+- **Mở dùng ngay (Open-Access mặc định):** Truy cập `/` hoặc `/boost` là dùng được ngay các chức năng, không bắt buộc đăng nhập/tạo tài khoản (có thể bật lại khóa Admin bằng `REQUIRE_AUTH=true`).
+- **Giao diện Tóm tắt → Chi tiết (Accordion):**
+  - Chỉ mở sẵn **Khối 1 (Mục tiêu & Proxy IP)** để thao tác nhanh.
+  - **Khối 2 (Số lượt, Ngày & Khung giờ VN)**, **Khối 3 (Hành vi, Thiết bị & Tùy chọn)** và **Bảng xem trước Phân bổ (`Smart` / `Even` / `Custom`)** mặc định thu gọn kèm thanh tóm tắt cập nhật theo thời gian thực, bấm vào để mở chi tiết.
+- **Lên lịch theo Ngày & Khung giờ chuẩn Việt Nam (`UTC+7 / Asia/Ho_Chi_Minh`):**
+  - Chọn ngày chạy và giờ bắt đầu → giờ kết thúc (ví dụ preset nhanh `06:00 – 07:00`, `08:00 – 12:00`...).
+  - Hỗ trợ **vắt qua đêm sang ngày hôm sau** (`+1 ngày`, ví dụ `23:00 → 01:00`).
+  - Tự cảnh báo nếu khung giờ đã trôi qua theo giờ VN và có nút **Dời sang ngày mai**; hỗ trợ trạng thái chờ (`Chờ tới giờ hẹn`) kèm đếm ngược live trước khi chạy và tự động đẩy bù lượt còn lại (burst) nếu quá giờ kết thúc.
+- **Tạm ẩn phần Thanh toán & Phiếu Cấu hình đã chọn:**
+  - Phần tính tiền/QR thanh toán được ẩn trên UI `/boost`; khi bấm **Xác nhận & Lên lịch Chiến dịch**, hệ thống hiển thị ngay **Phiếu "Cấu hình bạn đã chọn"** (URL đích, Proxy đã che, lịch chạy VN, hồ sơ hành vi/toggle, link chia sẻ `/track.html?orderId=...`) và tự kích hoạt/hẹn giờ chạy luôn trong Open-Access & Static Demo.
+  - Ở tầng API backend, chế độ kiểm soát thanh toán (`pending_payment = 0 click` trước khi duyệt) và phân quyền Admin vẫn được bảo toàn khi bật `REQUIRE_AUTH=true`.
+
+## Cơ chế gửi click (HTTP Request siêu nhẹ)
+
+Hệ thống chạy ở chế độ **`request` (Axios + KiotProxy)** — **không mở trình duyệt thật** (không chạy Puppeteer/Chrome):
+1. Xoay/lấy IP từ **KiotProxy** và gửi request qua HTTP Proxy Agent (`HttpProxyAgent` / `HttpsProxyAgent`), hỗ trợ **chống trùng IP (`dedupIp`)** theo từng key.
+2. Giả lập bộ header HTTP giống trình duyệt thật: ngẫu nhiên `User-Agent` theo nhóm thiết bị (`mobile`, `desktop`, hoặc `mixed`), `Accept-Language`, `sec-fetch-*` và `Referer` (`Google`, `Facebook`, `Bing` hoặc truy cập trực tiếp).
+3. Tải HTML trang đích (`status < 500`, có lớp chặn SSRF redirect), chờ mô phỏng thời gian đọc trang (**Dwell**) và tùy chọn quét click thêm 1 link nội bộ cùng tên miền (`randomLinks`).
+
+> **Lưu ý kỹ thuật:** Vì gửi HTTP request tải HTML thuần (không thực thi JavaScript phía trình duyệt), chi phí CPU/RAM rất nhẹ và phù hợp ghi nhận truy cập ở phía server / redirect / link tracker; các công cụ đo đếm dựa hoàn toàn vào JS trình duyệt (như GA4, Facebook Pixel hoặc Cloudflare JS Challenge) sẽ không được kích hoạt. Bản **Static Demo** chỉ mô phỏng trên trình duyệt cho tới khi bạn kết nối URL **Cloudflare Tunnel** trỏ về `server.js` thật.
 
 ## Yêu cầu môi trường
 
@@ -31,11 +54,13 @@ $env:PORT=3005; npm start
 
 ### Các đường dẫn chính khi chạy server
 
-- **Web Demo 1 màn hình (không cần tạo tài khoản):** `http://localhost:3005/boost`
-- **Trang đặt đơn riêng / theo dõi đơn công khai:** `http://localhost:3005/order.html`, `http://localhost:3005/track.html`
+- **Web Demo 1 màn hình (vào dùng ngay, không cần tài khoản):** `http://localhost:3005/boost`
+- **Dashboard quản lý chiến dịch (Open-Access mặc định):** `http://localhost:3005/`
+- **Trang đặt đơn riêng / theo dõi đơn công khai (kèm lịch VN & hành vi):** `http://localhost:3005/order.html`, `http://localhost:3005/track.html`
 - **Healthcheck API:** `http://localhost:3005/api/health`
-- **Trang quản trị Admin:** `http://localhost:3005/` (đăng nhập tại `http://localhost:3005/login.html`)
-  - Khi clone mới chưa có `admin.json`, server tự khởi tạo tài khoản mặc định `admin` / `admin123456`. Hãy đổi mật khẩu ngay khi triển khai thực tế.
+- **Đăng nhập Admin (chỉ kích hoạt khi bật `REQUIRE_AUTH=true`):** `http://localhost:3005/login.html`
+  - Mặc định (`REQUIRE_AUTH` chưa bật / `false`), `/` và tab Quản trị trên `/boost` mở thẳng không qua màn hình đăng nhập.
+  - Khi public server ra internet và muốn khóa quản trị, đặt `REQUIRE_AUTH=true` trong `.env`. Nếu chưa có `admin.json`, server tự khởi tạo `admin` / `admin123456` — hãy đổi mật khẩu ngay khi triển khai thực tế.
 
 ## Chạy bằng Docker & Docker Compose
 
@@ -75,12 +100,12 @@ Repository đã tích hợp sẵn script build tĩnh (`npm run build:demo` tạo
 
 - **GitHub Pages (`.github/workflows/pages.yml`):**
   1. Trên GitHub vào **Settings → Pages → Build and deployment → Source**, chọn **GitHub Actions**.
-  2. Mỗi khi push lên `main`, web demo tự cập nhật tại `https://proyctk03-eng.github.io/traffic_server/`.
+  2. Mỗi khi push lên `main`, web demo tự cập nhật tại `https://proyctk03-eng.github.io/traffic_server/boost.html`.
 - **Cloudflare Pages miễn phí `*.pages.dev`:**
   - *Cách A (không cần tạo API Token):* Vào Cloudflare Dashboard → **Workers & Pages → Create → Pages → Connect to Git**, chọn repo GitHub này, đặt:
     - **Build command:** `npm run build:demo`
     - **Build output directory:** `dist-demo`
-  - *Cách B (tự động deploy qua GitHub Actions `.github/workflows/cloudflare-pages.yml`):* Thêm 2 GitHub Secrets `CLOUDFLARE_API_TOKEN` (Scoped API Token có quyền `Cloudflare Pages: Edit` + `Account Settings: Read`) và `CLOUDFLARE_ACCOUNT_ID` vào **Settings → Secrets and variables → Actions** (workflow tự tạo Pages project `traffic-server-demo` nếu chưa tồn tại).
+  - *Cách B (tự động deploy qua GitHub Actions `.github/workflows/cloudflare-pages.yml`):* Thêm 2 GitHub Secrets `CLOUDFLARE_API_TOKEN` (Scoped API Token có quyền `Cloudflare Pages: Edit` + `Account Settings: Read`) và `CLOUDFLARE_ACCOUNT_ID` vào **Settings → Secrets and variables → Actions** (workflow tự tạo Pages project `traffic-server-demo` và deploy lên `https://traffic-server-demo.pages.dev/boost`).
 
 ### 2. Nối Web Demo với Backend thật qua Cloudflare Tunnel
 
@@ -131,6 +156,7 @@ Các file nhạy cảm hoặc dữ liệu runtime không được đẩy lên Gi
 
 - `.env`: Biến môi trường cục bộ (xem mẫu đầy đủ tại `.env.example`):
   - `PORT`: Cổng server (mặc định `3005`; với Docker Compose, host port lấy từ `PORT`, trong container luôn chạy `3005`).
+  - `REQUIRE_AUTH`: Mặc định không bật (`false` — chế độ Open-Access, vào thẳng dashboard và `/boost` không cần đăng nhập). Đặt `REQUIRE_AUTH=true` để bắt buộc đăng nhập Admin tại `/login.html` và khóa thao tác quản trị trên API.
   - `ALLOW_PRIVATE_TARGET_URLS`: Mặc định `false` để chặn SSRF tới IP nội bộ / loopback (`127.0.0.1`, `10.x`, `192.168.x`, `localhost`). Chỉ đặt `true` khi test với target server nội bộ.
   - `CORS_ORIGINS`: Danh sách origin cho phép gọi API cross-origin (phân tách bằng dấu phẩy), bổ sung ngoài `*.pages.dev`, `*.trycloudflare.com` và GitHub Pages mặc định.
   - `TELEGRAM_BOT_TOKEN`: Token bot Telegram (dùng khi `telegram_config.json` chưa có).
