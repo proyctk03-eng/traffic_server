@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const BoostShared = require('./public/js/boost-shared');
 
 const ORDERS_DIR = path.join(__dirname, 'orders');
 const PAYMENT_CONFIG_PATH = path.join(__dirname, 'payment_config.json');
@@ -212,14 +213,53 @@ function validateOrderParams(params) {
         }
     }
 
-    // durationHours
-    const durationVal = params.durationHours;
-    if (typeof durationVal !== 'number' && (typeof durationVal !== 'string' || durationVal.trim() === '')) {
-        errors.push('durationHours must be a positive number greater than 0');
+    // scheduleType + durationHours (Vietnam UTC+7 window support with overnight cross-day)
+    const scheduleType = params.scheduleType === 'window' ? 'window' : 'duration';
+    let resolvedDurationHours = Number(params.durationHours);
+    let windowFields = {
+        scheduleType,
+        runDate: null,
+        endRunDate: null,
+        startTime: null,
+        endTime: null,
+        overnight: false,
+        timezone: 'Asia/Ho_Chi_Minh',
+        scheduledStartAt: null,
+        scheduledEndAt: null
+    };
+
+    if (scheduleType === 'window') {
+        const win = BoostShared.computeVietnamScheduleWindow({
+            runDate: params.runDate,
+            startTime: params.startTime || params.startTimeText,
+            endTime: params.endTime || params.endTimeText,
+            allowPast: params.allowPast === true
+        });
+        if (!win.valid) {
+            errors.push(win.message || 'Khung giờ hẹn chạy không hợp lệ.');
+        } else {
+            resolvedDurationHours = win.durationHours;
+            windowFields = {
+                scheduleType: 'window',
+                runDate: win.runDate,
+                endRunDate: win.endRunDate,
+                startTime: win.startTime,
+                endTime: win.endTime,
+                overnight: win.overnight,
+                timezone: win.timezone,
+                scheduledStartAt: win.scheduledStartAt,
+                scheduledEndAt: win.scheduledEndAt
+            };
+        }
     } else {
-        const rawDuration = Number(durationVal);
-        if (isNaN(rawDuration) || !Number.isFinite(rawDuration) || rawDuration <= 0) {
+        const durationVal = params.durationHours;
+        if (typeof durationVal !== 'number' && (typeof durationVal !== 'string' || durationVal.trim() === '')) {
             errors.push('durationHours must be a positive number greater than 0');
+        } else {
+            const rawDuration = Number(durationVal);
+            if (isNaN(rawDuration) || !Number.isFinite(rawDuration) || rawDuration <= 0) {
+                errors.push('durationHours must be a positive number greater than 0');
+            }
         }
     }
 
@@ -264,14 +304,15 @@ function validateOrderParams(params) {
             targetUrl,
             proxyKey,
             targetClicks: Number(params.targetClicks),
-            durationHours: Number(params.durationHours),
+            durationHours: resolvedDurationHours,
             name,
             scheduleMode,
             customBlocks,
             dedupIp,
             randomLinks,
             dwellPreset,
-            deviceProfile
+            deviceProfile,
+            ...windowFields
         } : null
     };
 }
@@ -456,6 +497,15 @@ function createOrder(data) {
         browserMode: 'request',
         scheduleMode: sanitized.scheduleMode || 'smart',
         customBlocks: sanitized.customBlocks || null,
+        scheduleType: sanitized.scheduleType || 'duration',
+        runDate: sanitized.runDate || null,
+        endRunDate: sanitized.endRunDate || null,
+        startTime: sanitized.startTime || null,
+        endTime: sanitized.endTime || null,
+        overnight: Boolean(sanitized.overnight),
+        timezone: sanitized.timezone || 'Asia/Ho_Chi_Minh',
+        scheduledStartAt: sanitized.scheduledStartAt || null,
+        scheduledEndAt: sanitized.scheduledEndAt || null,
         dedupIp: sanitized.dedupIp !== false,
         randomLinks: sanitized.randomLinks !== false,
         dwellPreset: sanitized.dwellPreset || 'short',

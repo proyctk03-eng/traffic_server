@@ -292,11 +292,13 @@ details.info-collapse .collapse-body { padding: 4px 14px; }
 
     <div class="kv"><span>Mã đơn</span><b id="dId"></b></div>
     <div class="kv"><span>Link đích</span><b id="dUrl"></b></div>
+    <div class="kv"><span>Lịch chạy (Giờ VN)</span><b id="dSchedule" class="emerald">--</b></div>
+    <div class="kv"><span>Hành vi / Thiết bị</span><b id="dProfile">--</b></div>
     <div class="kv"><span>Số tiền</span><b id="dTotal" class="emerald"></b></div>
     <div class="kv"><span>Thành công / Lỗi</span><b id="dCounts"></b></div>
 
     <details class="info-collapse">
-      <summary><span><i class="fa-solid fa-circle-info"></i> Chi tiết chuyển khoản &amp; proxy</span><i class="fa-solid fa-chevron-down"></i></summary>
+      <summary><span><i class="fa-solid fa-circle-info"></i> Chi tiết proxy &amp; lịch trình</span><i class="fa-solid fa-chevron-down"></i></summary>
       <div class="collapse-body">
         <div class="kv"><span>Mã chuyển khoản</span><b id="dCode"></b></div>
         <div class="kv"><span>Proxy</span><b id="dProxy"></b></div>
@@ -309,6 +311,7 @@ details.info-collapse .collapse-body { padding: 4px 14px; }
   </div>
 </div>
 
+<script src="/js/boost-shared.js"></script>
 <script src="/socket.io/socket.io.js"></script>
 <script>
 const $ = id => document.getElementById(id);
@@ -366,6 +369,11 @@ function renderOrder(o) {
     payBtn.classList.add('hidden');
     payBtn.style.display = 'none';
     stopPolling();
+  } else if (st === 'waiting') {
+    badge.className = 'badge b-wait';
+    badge.textContent = 'Chờ tới giờ hẹn';
+    payBtn.classList.add('hidden');
+    payBtn.style.display = 'none';
   } else if (o.paymentStatus !== 'paid') {
     badge.className = 'badge b-wait';
     badge.textContent = 'Chờ thanh toán';
@@ -374,7 +382,7 @@ function renderOrder(o) {
     payBtn.href = '/order.html?orderId=' + encodeURIComponent(o.orderId);
   } else {
     badge.className = 'badge b-ok';
-    badge.textContent = 'Đã thanh toán · Đang chạy';
+    badge.textContent = 'Đang chạy';
     payBtn.classList.add('hidden');
     payBtn.style.display = 'none';
   }
@@ -382,10 +390,20 @@ function renderOrder(o) {
   $('dId').textContent = o.orderId;
   $('dCode').textContent = o.orderCode;
   $('dUrl').textContent = o.targetUrl;
+  const S = window.BoostShared;
+  if ($('dSchedule')) {
+    $('dSchedule').textContent = S ? S.formatScheduleWindowSummary(o) : `${o.durationHours || 1} giờ`;
+  }
+  if ($('dProfile')) {
+    const dwellStr = S ? S.formatDwellLabel(o.dwellPreset) : (o.dwellPreset || 'short');
+    const devStr = S ? S.formatDeviceLabel(o.deviceProfile) : (o.deviceProfile || 'mixed');
+    $('dProfile').textContent = `${dwellStr} · ${devStr}`;
+  }
   $('dProxy').textContent = o.proxyKeyMasked || 'KiotProxy';
   $('dTotal').textContent = (o.totalAmount || 0).toLocaleString('vi-VN') + 'đ';
   $('dCounts').textContent = `${success} / ${failed}`;
-  $('dEnd').textContent = p.endTime ? new Date(p.endTime).toLocaleString('vi-VN') : '—';
+  const endMs = p.endTime || o.scheduledEndAt;
+  $('dEnd').textContent = endMs ? (S ? S.formatVnDateTime(endMs) : new Date(endMs).toLocaleString('vi-VN')) : '—';
 }
 
 async function fetchOrder(showSpinner) {

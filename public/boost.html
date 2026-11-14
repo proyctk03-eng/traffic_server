@@ -492,6 +492,8 @@
         input[type="url"],
         input[type="number"],
         input[type="password"],
+        input[type="date"],
+        input[type="time"],
         select,
         textarea {
             width: 100%;
@@ -502,6 +504,7 @@
             padding: 9px 11px;
             font-size: 13.5px;
             font-family: inherit;
+            color-scheme: dark;
             transition: border-color 0.16s ease, box-shadow 0.16s ease, background-color 0.16s ease;
         }
         input:focus, select:focus, textarea:focus {
@@ -527,12 +530,168 @@
             cursor: pointer;
             transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease, transform 0.15s ease;
         }
-        .preset-btn:hover {
+        .preset-btn:hover,
+        .preset-btn.active {
             color: var(--text);
             border-color: var(--accent);
-            background: rgba(6, 182, 212, 0.1);
+            background: rgba(6, 182, 212, 0.14);
             transform: translateY(-1px);
         }
+
+        /* ── Expandable Functional Accordions (Tóm tắt -> Chi tiết) ─ */
+        .func-accordion {
+            border: 1px solid var(--border-strong);
+            border-radius: var(--radius-md);
+            background: rgba(15, 23, 42, 0.48);
+            margin-bottom: 12px;
+            overflow: hidden;
+            transition: border-color 0.16s ease, background-color 0.16s ease;
+        }
+        .func-accordion:last-of-type { margin-bottom: 0; }
+        .func-accordion[open] {
+            border-color: rgba(6, 182, 212, 0.42);
+            background: rgba(15, 23, 42, 0.72);
+        }
+        .func-accordion > summary {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px 12px;
+            padding: 12px 14px;
+            cursor: pointer;
+            list-style: none;
+            user-select: none;
+            transition: background-color 0.15s ease;
+        }
+        .func-accordion > summary::-webkit-details-marker { display: none; }
+        .func-accordion > summary:hover { background: rgba(255, 255, 255, 0.03); }
+        .func-accordion[open] > summary {
+            border-bottom: 1px solid var(--border);
+            background: rgba(6, 182, 212, 0.05);
+        }
+        .func-acc-title {
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--text);
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .func-acc-summary-wrap {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+            max-width: 100%;
+            margin-left: auto;
+        }
+        .func-acc-summary-pill {
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--accent-soft, #67e8f9);
+            background: rgba(6, 182, 212, 0.1);
+            border: 1px solid rgba(6, 182, 212, 0.25);
+            border-radius: 999px;
+            padding: 3px 10px;
+            max-width: 100%;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+            line-height: 1.35;
+        }
+        .func-accordion .chevron-icon {
+            width: 16px;
+            height: 16px;
+            color: var(--muted);
+            flex-shrink: 0;
+            transition: transform 0.18s ease;
+        }
+        .func-accordion[open] .chevron-icon {
+            transform: rotate(180deg);
+            color: var(--accent);
+        }
+        .func-acc-body {
+            padding: 14px;
+        }
+
+        /* ── Schedule Mode Segmented Tabs & Window Box ────────────── */
+        .seg-tabs {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px;
+            padding: 4px;
+            border-radius: var(--radius-sm);
+            background: var(--bg);
+            border: 1px solid var(--border-strong);
+            margin-bottom: 12px;
+        }
+        @media (max-width: 480px) { .seg-tabs { grid-template-columns: 1fr; } }
+        .seg-btn {
+            border: 1px solid transparent;
+            background: transparent;
+            color: var(--muted);
+            border-radius: 6px;
+            padding: 8px 10px;
+            font-size: 12.5px;
+            font-weight: 600;
+            cursor: pointer;
+            font-family: inherit;
+            transition: all 0.15s ease;
+        }
+        .seg-btn:hover { color: var(--text); }
+        .seg-btn.active {
+            color: #ecfeff;
+            background: rgba(6, 182, 212, 0.18);
+            border-color: rgba(6, 182, 212, 0.45);
+        }
+
+        .window-calc-box {
+            margin-top: 10px;
+            padding: 10px 12px;
+            border-radius: var(--radius-sm);
+            background: rgba(16, 185, 129, 0.08);
+            border: 1px solid rgba(16, 185, 129, 0.28);
+            font-size: 12.5px;
+            color: #a7f3d0;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+        .window-calc-box.overnight {
+            background: rgba(99, 102, 241, 0.12);
+            border-color: rgba(129, 140, 248, 0.35);
+            color: #e0e7ff;
+        }
+
+        .pre-summary-box {
+            background: var(--surface-2);
+            border: 1px solid rgba(6, 182, 212, 0.25);
+            border-radius: var(--radius-md);
+            padding: 12px 14px;
+        }
+        .selection-summary-box {
+            background: rgba(16, 185, 129, 0.06);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: var(--radius-md);
+            padding: 12px 14px;
+            margin-bottom: 12px;
+        }
+        .selection-summary-title {
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--emerald-bright);
+            margin-bottom: 8px;
+        }
+        .schedule-row-3 {
+            display: grid;
+            grid-template-columns: 1.2fr 1fr 1fr;
+            gap: 10px;
+        }
+        @media (max-width: 600px) { .schedule-row-3 { grid-template-columns: 1fr; } }
 
         /* ── Modern Toggle Switches ───────────────────────────────── */
         .toggles-grid {
@@ -1078,7 +1237,7 @@
                 <summary>
                     <span class="summary-left">
                         <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-                        <span>Thông số kỹ thuật &amp; Quy tắc thực thi</span>
+                        <span>Thông số kỹ thuật &amp; Hẹn giờ chuẩn Việt Nam (UTC+7)</span>
                     </span>
                     <span class="summary-right">
                         <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
@@ -1087,9 +1246,9 @@
                 <div class="collapsible-body">
                     <section class="spec-strip">
                         <div class="spec-tile"><strong>Thực thi đúng nền tảng</strong><span id="spec-mode">Request HTTP nhẹ (Axios + KiotProxy), giữ IP 2–5s, 0 trình duyệt</span></div>
-                        <div class="spec-tile"><strong>Định giá backend</strong><span id="spec-pricing">40 VNĐ/click + Math.ceil(giờ) × 2.000 VNĐ</span></div>
-                        <div class="spec-tile"><strong>Khóa tiền thanh toán</strong>Chưa thanh toán (<code>pending_payment</code>) = <strong>0 click</strong> được phép chạy</div>
-                        <div class="spec-tile"><strong>Vận hành mở &amp; nhanh</strong>Tạo đơn, xác nhận thanh toán, quản lý đơn &amp; log worker trực tiếp trên 1 màn hình</div>
+                        <div class="spec-tile"><strong>Hẹn giờ chuẩn Giờ VN (UTC+7)</strong>Hỗ trợ chọn Ngày + Khung giờ (VD 06:00–07:00), tự nhận diện chạy vắt qua đêm (+1 ngày)</div>
+                        <div class="spec-tile"><strong>Chạy bù khi thiếu click</strong>Nếu hết khung giờ hẹn mà chưa đủ số click mục tiêu, hệ thống tự động chạy bù cho đủ</div>
+                        <div class="spec-tile"><strong>Giao diện Tóm tắt &rarr; Chi tiết</strong>Chỉ mở khối nhập mục tiêu, các nhóm tùy chỉnh thu gọn sẵn và bấm vào để chỉnh sâu</div>
                     </section>
                 </div>
             </details>
@@ -1098,7 +1257,7 @@
         <!-- TAB 1: CUSTOMER BOOST & LINEAR FLOW -->
         <section id="tab-customer">
             <div class="grid-2">
-                <!-- Left Column: Grouped Boost Configuration + Collapsible Distribution Preview -->
+                <!-- Left Column: Expandable Summary -> Detail Accordions -->
                 <div>
                     <div class="card">
                         <h2>
@@ -1106,129 +1265,190 @@
                                 <span class="step-badge">1</span>
                                 <span>Cấu hình Chiến dịch Boost</span>
                             </span>
-                            <span class="pill ok">Khởi tạo nhanh</span>
+                            <span class="pill ok">Tóm tắt &rarr; Chi tiết</span>
                         </h2>
 
                         <form id="boost-form">
-                            <div class="form-section">
-                                <div class="form-section-title">Mục tiêu &amp; Proxy xoay IP</div>
-                                <div class="field">
-                                    <label for="f-name">Tên chiến dịch (tùy chọn)</label>
-                                    <input type="text" id="f-name" placeholder="Ví dụ: Boost landing page tháng 11">
-                                </div>
-
-                                <div class="field">
-                                    <label for="f-url">URL đích (Target URL) *</label>
-                                    <input type="url" id="f-url" placeholder="https://example.com/bai-viet" required>
-                                    <div class="hint">Phải là URL hợp lệ bắt đầu bằng <code>http://</code> hoặc <code>https://</code>.</div>
-                                </div>
-
-                                <div class="field">
-                                    <label for="f-proxy">KiotProxy Key *</label>
-                                    <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
-                                        <input type="text" id="f-proxy" placeholder="Kxxxxxxxxxxxxxxxxxxxx..." required style="flex:1; min-width:180px;">
-                                        <button type="button" class="btn btn-sm" id="validate-proxy-btn">
-                                            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
-                                            <span class="btn-label">Kiểm tra Key KiotProxy</span>
-                                        </button>
-                                    </div>
-                                    <div class="hint">Key xoay IP riêng cho đơn hàng (server sẽ ẩn bớt ký tự ở API công khai).</div>
-                                    <div id="proxy-validate-msg"></div>
-                                </div>
-                            </div>
-
-                            <div class="form-section">
-                                <div class="form-section-title">Lưu lượng &amp; Phân bổ thời gian</div>
-                                <div class="form-row">
+                            <!-- Khối 1: Mở sẵn mặc định (3B) -->
+                            <details id="acc-target" class="func-accordion" open>
+                                <summary>
+                                    <span class="func-acc-title">1. Mục tiêu &amp; Proxy xoay IP</span>
+                                    <span class="func-acc-summary-wrap">
+                                        <span id="sum-target" class="func-acc-summary-pill">Chưa nhập URL &bull; Chưa có Key</span>
+                                        <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+                                    </span>
+                                </summary>
+                                <div class="func-acc-body">
                                     <div class="field">
-                                        <label for="f-clicks">Số lượt click mục tiêu *</label>
-                                        <input type="number" id="f-clicks" value="100" min="1" step="1" required>
+                                        <label for="f-name">Tên chiến dịch (tùy chọn)</label>
+                                        <input type="text" id="f-name" placeholder="Ví dụ: Boost landing page tháng 11">
                                     </div>
+
                                     <div class="field">
-                                        <label for="f-hours">Thời gian chạy (giờ) *</label>
-                                        <input type="number" id="f-hours" value="1" min="0.0001" step="any" required>
-                                        <div class="presets">
-                                            <button type="button" class="preset-btn" data-hours="0.25">15p (0.25h)</button>
-                                            <button type="button" class="preset-btn" data-hours="0.5">30p (0.5h)</button>
-                                            <button type="button" class="preset-btn" data-hours="1">1h</button>
-                                            <button type="button" class="preset-btn" data-hours="1.5">1.5h</button>
-                                            <button type="button" class="preset-btn" data-hours="2">2h</button>
-                                            <button type="button" class="preset-btn" data-hours="6">6h</button>
-                                            <button type="button" class="preset-btn" data-hours="24">24h</button>
+                                        <label for="f-url">URL đích (Target URL) *</label>
+                                        <input type="url" id="f-url" placeholder="https://example.com/bai-viet" required>
+                                        <div class="hint">Phải là URL hợp lệ bắt đầu bằng <code>http://</code> hoặc <code>https://</code>.</div>
+                                    </div>
+
+                                    <div class="field">
+                                        <label for="f-proxy">KiotProxy Key *</label>
+                                        <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+                                            <input type="text" id="f-proxy" placeholder="Kxxxxxxxxxxxxxxxxxxxx..." required style="flex:1; min-width:180px;">
+                                            <button type="button" class="btn btn-sm" id="validate-proxy-btn">
+                                                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
+                                                <span class="btn-label">Kiểm tra Key KiotProxy</span>
+                                            </button>
+                                        </div>
+                                        <div class="hint">Key xoay IP riêng cho chiến dịch (sẽ ẩn bớt ký tự ở API công khai).</div>
+                                        <div id="proxy-validate-msg"></div>
+                                    </div>
+                                </div>
+                            </details>
+
+                            <!-- Khối 2: Thu gọn mặc định (3B) - Hẹn giờ Ngày / Khung giờ VN + Lưu lượng -->
+                            <details id="acc-schedule" class="func-accordion">
+                                <summary>
+                                    <span class="func-acc-title">2. Hẹn giờ Ngày/Khung giờ (Giờ VN) &amp; Lưu lượng</span>
+                                    <span class="func-acc-summary-wrap">
+                                        <span id="sum-schedule" class="func-acc-summary-pill">100 clicks &bull; Giờ VN &bull; Smart</span>
+                                        <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+                                    </span>
+                                </summary>
+                                <div class="func-acc-body">
+                                    <div class="seg-tabs" role="tablist" aria-label="Chế độ lịch chạy">
+                                        <button type="button" class="seg-btn active" id="btn-sched-window" data-sched-type="window" role="tab" aria-selected="true">Hẹn Ngày &amp; Khung giờ (Giờ VN)</button>
+                                        <button type="button" class="seg-btn" id="btn-sched-duration" data-sched-type="duration" role="tab" aria-selected="false">Chạy ngay theo thời lượng</button>
+                                    </div>
+                                    <input type="hidden" id="f-sched-type" value="window">
+
+                                    <div id="sched-window-fields">
+                                        <div class="schedule-row-3">
+                                            <div class="field">
+                                                <label for="f-run-date">Ngày chạy (Giờ VN UTC+7) *</label>
+                                                <input type="date" id="f-run-date">
+                                            </div>
+                                            <div class="field">
+                                                <label for="f-start-time">Giờ bắt đầu *</label>
+                                                <input type="time" id="f-start-time" value="06:00">
+                                            </div>
+                                            <div class="field">
+                                                <label for="f-end-time">Giờ kết thúc *</label>
+                                                <input type="time" id="f-end-time" value="07:00">
+                                            </div>
+                                        </div>
+
+                                        <div class="presets" aria-label="Chọn nhanh khung giờ phổ biến">
+                                            <button type="button" class="preset-btn window-preset-btn" data-start="06:00" data-end="07:00">06:00 – 07:00 (Sáng)</button>
+                                            <button type="button" class="preset-btn window-preset-btn" data-start="09:00" data-end="11:00">09:00 – 11:00 (Sáng)</button>
+                                            <button type="button" class="preset-btn window-preset-btn" data-start="12:00" data-end="13:00">12:00 – 13:00 (Trưa)</button>
+                                            <button type="button" class="preset-btn window-preset-btn" data-start="20:00" data-end="22:00">20:00 – 22:00 (Tối)</button>
+                                            <button type="button" class="preset-btn window-preset-btn" data-start="23:00" data-end="01:00">23:00 – 01:00 (Qua đêm +1d)</button>
+                                        </div>
+
+                                        <div id="window-calc-box" class="window-calc-box">
+                                            <span id="window-calc-text">Đang tính khung giờ Việt Nam...</span>
+                                            <span id="window-overnight-badge" class="pill info hidden">Vắt qua đêm (+1 ngày)</span>
+                                        </div>
+                                        <div id="window-alert-box" class="hidden" style="margin-top:8px;"></div>
+                                        <div class="hint">Múi giờ cố định theo Việt Nam (<code>UTC+7</code>). Nếu giờ kết thúc nhỏ hơn giờ bắt đầu (VD <code>23:00 → 01:00</code>), hệ thống tự hiểu chạy vắt sang ngày hôm sau.</div>
+                                    </div>
+
+                                    <div id="sched-duration-fields" class="hidden">
+                                        <div class="field">
+                                            <label for="f-hours">Thời gian chạy (giờ) *</label>
+                                            <input type="number" id="f-hours" value="1" min="0.0001" step="any" required>
+                                            <div class="presets">
+                                                <button type="button" class="preset-btn" data-hours="0.25">15p (0.25h)</button>
+                                                <button type="button" class="preset-btn" data-hours="0.5">30p (0.5h)</button>
+                                                <button type="button" class="preset-btn" data-hours="1">1h</button>
+                                                <button type="button" class="preset-btn" data-hours="1.5">1.5h</button>
+                                                <button type="button" class="preset-btn" data-hours="2">2h</button>
+                                                <button type="button" class="preset-btn" data-hours="6">6h</button>
+                                                <button type="button" class="preset-btn" data-hours="24">24h</button>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="form-row" style="margin-top:12px;">
+                                        <div class="field">
+                                            <label for="f-clicks">Số lượt click mục tiêu *</label>
+                                            <input type="number" id="f-clicks" value="100" min="1" step="1" required>
+                                        </div>
+                                        <div class="field">
+                                            <label for="f-schedule">Kiểu phân bổ thời gian</label>
+                                            <select id="f-schedule">
+                                                <option value="smart">Smart (Theo hành vi người dùng theo giờ)</option>
+                                                <option value="even">Even (Chia đều tuyến tính)</option>
+                                                <option value="custom">Custom (Tùy chỉnh 7 khung giờ)</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    <!-- CRITICAL DOM STRUCTURE: keep flat .form-row > .field > label[for="cb-*"] + select#cb-* -->
+                                    <div id="custom-blocks-box" class="cost-box hidden" style="margin-top:10px; margin-bottom:4px;">
+                                        <div class="hint" style="margin-bottom:6px;font-weight:600;color:var(--text);">Cấu hình mật độ 7 khung giờ (TimeDistribution):</div>
+                                        <div class="form-row">
+                                            <div class="field"><label for="cb-night">00h–06h (Đêm)</label><select id="cb-night"><option value="low" selected>Thấp (0.3x)</option><option value="medium">TB (1.0x)</option><option value="high">Cao (1.8x)</option></select></div>
+                                            <div class="field"><label for="cb-early">06h–09h (Sáng sớm)</label><select id="cb-early"><option value="low">Thấp (0.3x)</option><option value="medium" selected>TB (1.0x)</option><option value="high">Cao (1.8x)</option></select></div>
+                                            <div class="field"><label for="cb-morn">09h–12h (Sáng cao điểm)</label><select id="cb-morn"><option value="low">Thấp (0.3x)</option><option value="medium">TB (1.0x)</option><option value="high" selected>Cao (1.8x)</option></select></div>
+                                            <div class="field"><label for="cb-noon">12h–14h (Trưa)</label><select id="cb-noon"><option value="low">Thấp (0.3x)</option><option value="medium" selected>TB (1.0x)</option><option value="high">Cao (1.8x)</option></select></div>
+                                            <div class="field"><label for="cb-after">14h–18h (Chiều cao điểm)</label><select id="cb-after"><option value="low">Thấp (0.3x)</option><option value="medium">TB (1.0x)</option><option value="high" selected>Cao (1.8x)</option></select></div>
+                                            <div class="field"><label for="cb-eve">18h–22h (Tối cao điểm)</label><select id="cb-eve"><option value="low">Thấp (0.3x)</option><option value="medium">TB (1.0x)</option><option value="high" selected>Cao (1.8x)</option></select></div>
+                                            <div class="field"><label for="cb-late">22h–00h (Khuya)</label><select id="cb-late"><option value="low">Thấp (0.3x)</option><option value="medium" selected>TB (1.0x)</option><option value="high">Cao (1.8x)</option></select></div>
                                         </div>
                                     </div>
                                 </div>
+                            </details>
 
-                                <div class="form-row">
-                                    <div class="field">
-                                        <label for="f-schedule">Kiểu phân bổ thời gian</label>
-                                        <select id="f-schedule">
-                                            <option value="smart">Smart (Theo hành vi người dùng theo giờ)</option>
-                                            <option value="even">Even (Chia đều tuyến tính)</option>
-                                            <option value="custom">Custom (Tùy chỉnh 7 khung giờ)</option>
-                                        </select>
-                                    </div>
-                                    <div class="field">
-                                        <label>Chế độ thực thi nền tảng</label>
-                                        <input type="text" value="request (Axios + KiotProxy nhẹ)" disabled>
-                                    </div>
-                                </div>
-
-                                <!-- CRITICAL DOM STRUCTURE: keep flat .form-row > .field > label[for="cb-*"] + select#cb-* -->
-                                <div id="custom-blocks-box" class="cost-box hidden" style="margin-top:10px; margin-bottom:10px;">
-                                    <div class="hint" style="margin-bottom:6px;font-weight:600;color:var(--text);">Cấu hình mật độ 7 khung giờ (TimeDistribution):</div>
+                            <!-- Khối 3: Thu gọn mặc định (3B) - Hành vi & Thiết bị -->
+                            <details id="acc-behavior" class="func-accordion">
+                                <summary>
+                                    <span class="func-acc-title">3. Hành vi &amp; Thiết bị truy cập</span>
+                                    <span class="func-acc-summary-wrap">
+                                        <span id="sum-behavior" class="func-acc-summary-pill">Nhanh (2–5s) &bull; Hỗn hợp &bull; IP: Bật &bull; Link: Bật</span>
+                                        <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+                                    </span>
+                                </summary>
+                                <div class="func-acc-body">
                                     <div class="form-row">
-                                        <div class="field"><label for="cb-night">00h–06h (Đêm)</label><select id="cb-night"><option value="low" selected>Thấp (0.3x)</option><option value="medium">TB (1.0x)</option><option value="high">Cao (1.8x)</option></select></div>
-                                        <div class="field"><label for="cb-early">06h–09h (Sáng sớm)</label><select id="cb-early"><option value="low">Thấp (0.3x)</option><option value="medium" selected>TB (1.0x)</option><option value="high">Cao (1.8x)</option></select></div>
-                                        <div class="field"><label for="cb-morn">09h–12h (Sáng cao điểm)</label><select id="cb-morn"><option value="low">Thấp (0.3x)</option><option value="medium">TB (1.0x)</option><option value="high" selected>Cao (1.8x)</option></select></div>
-                                        <div class="field"><label for="cb-noon">12h–14h (Trưa)</label><select id="cb-noon"><option value="low">Thấp (0.3x)</option><option value="medium" selected>TB (1.0x)</option><option value="high">Cao (1.8x)</option></select></div>
-                                        <div class="field"><label for="cb-after">14h–18h (Chiều cao điểm)</label><select id="cb-after"><option value="low">Thấp (0.3x)</option><option value="medium">TB (1.0x)</option><option value="high" selected>Cao (1.8x)</option></select></div>
-                                        <div class="field"><label for="cb-eve">18h–22h (Tối cao điểm)</label><select id="cb-eve"><option value="low">Thấp (0.3x)</option><option value="medium">TB (1.0x)</option><option value="high" selected>Cao (1.8x)</option></select></div>
-                                        <div class="field"><label for="cb-late">22h–00h (Khuya)</label><select id="cb-late"><option value="low">Thấp (0.3x)</option><option value="medium" selected>TB (1.0x)</option><option value="high">Cao (1.8x)</option></select></div>
+                                        <div class="field">
+                                            <label for="f-dwell-preset">Thời gian lưu trang (Dwell)</label>
+                                            <select id="f-dwell-preset">
+                                                <option value="short" selected>Nhanh (2–5s · Mặc định)</option>
+                                                <option value="medium">Trung bình (5–10s)</option>
+                                                <option value="long">Đọc sâu (10–20s)</option>
+                                            </select>
+                                            <div class="hint">Mô phỏng thời gian đọc trang trước khi đóng hoặc chuyển link.</div>
+                                        </div>
+                                        <div class="field">
+                                            <label for="f-device-profile">Hồ sơ thiết bị (User-Agent)</label>
+                                            <select id="f-device-profile">
+                                                <option value="mixed" selected>Hỗn hợp Mobile + Desktop (Mặc định)</option>
+                                                <option value="mobile">Mobile (iOS / Android)</option>
+                                                <option value="desktop">Desktop (Windows / macOS)</option>
+                                            </select>
+                                            <div class="hint">Phân phối hồ sơ trình duyệt/thiết bị cho mỗi lượt truy cập.</div>
+                                        </div>
                                     </div>
-                                </div>
-                            </div>
 
-                            <div class="form-section">
-                                <div class="form-section-title">Hành vi &amp; Tùy chọn truy cập</div>
-                                <div class="form-row">
-                                    <div class="field">
-                                        <label for="f-dwell-preset">Thời gian lưu trang (Dwell)</label>
-                                        <select id="f-dwell-preset">
-                                            <option value="short" selected>Nhanh (2–5s · Mặc định)</option>
-                                            <option value="medium">Trung bình (5–10s)</option>
-                                            <option value="long">Đọc sâu (10–20s)</option>
-                                        </select>
-                                        <div class="hint">Mô phỏng thời gian đọc trang trước khi đóng hoặc chuyển link.</div>
-                                    </div>
-                                    <div class="field">
-                                        <label for="f-device-profile">Hồ sơ thiết bị (User-Agent)</label>
-                                        <select id="f-device-profile">
-                                            <option value="mixed" selected>Hỗn hợp Mobile + Desktop (Mặc định)</option>
-                                            <option value="mobile">Mobile (iOS / Android)</option>
-                                            <option value="desktop">Desktop (Windows / macOS)</option>
-                                        </select>
-                                        <div class="hint">Phân phối hồ sơ trình duyệt/thiết bị cho mỗi lượt truy cập.</div>
+                                    <div class="toggles-grid">
+                                        <label class="toggle-switch" for="f-dedup">
+                                            <input type="checkbox" id="f-dedup" checked>
+                                            <span class="toggle-copy">
+                                                <span class="toggle-title">Chống trùng IP (dedupIp)</span>
+                                                <span class="toggle-sub">Bỏ qua IP đã đếm trước đó</span>
+                                            </span>
+                                        </label>
+                                        <label class="toggle-switch" for="f-links">
+                                            <input type="checkbox" id="f-links" checked>
+                                            <span class="toggle-copy">
+                                                <span class="toggle-title">Link nội bộ ngẫu nhiên</span>
+                                                <span class="toggle-sub">Click sâu trang con (randomLinks)</span>
+                                            </span>
+                                        </label>
                                     </div>
                                 </div>
-
-                                <div class="toggles-grid">
-                                    <label class="toggle-switch" for="f-dedup">
-                                        <input type="checkbox" id="f-dedup" checked>
-                                        <span class="toggle-copy">
-                                            <span class="toggle-title">Chống trùng IP (dedupIp)</span>
-                                            <span class="toggle-sub">Bỏ qua IP đã đếm trước đó</span>
-                                        </span>
-                                    </label>
-                                    <label class="toggle-switch" for="f-links">
-                                        <input type="checkbox" id="f-links" checked>
-                                        <span class="toggle-copy">
-                                            <span class="toggle-title">Link nội bộ ngẫu nhiên</span>
-                                            <span class="toggle-sub">Click sâu trang con (randomLinks)</span>
-                                        </span>
-                                    </label>
-                                </div>
-                            </div>
+                            </details>
                         </form>
                     </div>
 
@@ -1265,55 +1485,76 @@
                     </details>
                 </div>
 
-                <!-- Right Column: Step 2 Cost Summary -> Step 3 VietQR + Shareable Track Link -> Quick Lookup -->
+                <!-- Right Column: Step 2 Live Preview & Schedule Submit -> Step 3 Selection Receipt + Live Execution -->
                 <div>
-                    <!-- Step 2: Cost Summary + Primary Submit CTA -->
+                    <!-- Step 2: Live Configuration Preview + Primary Schedule CTA (Payment Hidden) -->
                     <div class="card">
                         <h2>
                             <span class="card-title-group">
                                 <span class="step-badge emerald">2</span>
-                                <span>Báo giá &amp; Tạo đơn Thanh toán</span>
+                                <span>Xem trước Lựa chọn &amp; Lên lịch</span>
                             </span>
-                            <span class="pill ok">Tính giá tức thì</span>
+                            <span class="pill ok">Chuẩn giờ VN (UTC+7)</span>
                         </h2>
                         <div id="order-form-msg"></div>
-                        <div class="cost-box cost-box-hero" id="cost-box" style="margin-top:0;">
+
+                        <div id="pre-summary-box" class="pre-summary-box">
+                            <div class="kv">
+                                <span>Tên / URL đích</span>
+                                <strong id="pre-target" class="mono" style="text-align:right;max-width:65%;word-break:break-all;color:var(--text);">Chưa nhập URL</strong>
+                            </div>
+                            <div class="kv">
+                                <span>Lịch chạy (Giờ VN)</span>
+                                <strong id="pre-window" style="text-align:right;color:var(--emerald-bright);">--</strong>
+                            </div>
+                            <div class="kv">
+                                <span>Lưu lượng &amp; Phân bổ</span>
+                                <strong id="pre-traffic" style="text-align:right;color:var(--text-soft);">100 clicks &bull; Smart</strong>
+                            </div>
+                            <div class="kv" style="border-bottom:none;padding-bottom:0;">
+                                <span>Hành vi &amp; Thiết bị</span>
+                                <strong id="pre-behavior" style="text-align:right;color:var(--text-soft);">Nhanh (2–5s) &bull; Hỗn hợp</strong>
+                            </div>
+                        </div>
+
+                        <!-- Hidden Pricing Fallback Elements (Payment UI deferred) -->
+                        <div class="cost-box cost-box-hero hidden" id="cost-box" aria-hidden="true">
                             <div class="kv">
                                 <span>Phí click (<span id="c-clicks" class="num">100</span> &times; <span id="c-rate" class="num">40</span> VNĐ)</span>
                                 <strong id="c-click-fee" class="num">4.000 VNĐ</strong>
                             </div>
                             <div class="kv">
-                                <span>Phí thời gian (làm tròn lên <span id="c-hours" class="num">1</span> giờ &times; <span id="c-hrate" class="num">2.000</span> VNĐ)</span>
+                                <span>Phí thời gian (<span id="c-hours" class="num">1</span> giờ &times; <span id="c-hrate" class="num">2.000</span> VNĐ)</span>
                                 <strong id="c-hour-fee" class="num">2.000 VNĐ</strong>
                             </div>
                             <div class="kv total">
-                                <span>Tổng thanh toán</span>
+                                <span>Tổng</span>
                                 <span id="c-total">6.000 VNĐ</span>
                             </div>
-                            <div id="cost-hint" class="hint hidden" style="color:var(--amber);margin-top:6px;"></div>
+                            <div id="cost-hint" class="hint hidden"></div>
                         </div>
 
                         <button type="submit" form="boost-form" class="btn btn-primary btn-cta" id="submit-order-btn">
-                            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3h-3z"/><path d="M18 18h3v3h-3z"/></svg>
-                            <span class="btn-label">Tạo đơn Boost &amp; Lấy mã VietQR</span>
+                            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                            <span class="btn-label">Xác nhận &amp; Lên lịch Chiến dịch</span>
                         </button>
                     </div>
 
-                    <!-- Step 3: Active Order VietQR + Shareable Track Link + Live Execution -->
+                    <!-- Step 3: Selection Receipt + Shareable Track Link + Live Execution -->
                     <div class="card" id="active-order-empty">
                         <h2>
                             <span class="card-title-group">
                                 <span class="step-badge">3</span>
-                                <span>VietQR Thanh toán &amp; Link Theo dõi</span>
+                                <span>Phiếu Cấu hình Đã chọn &amp; Theo dõi</span>
                             </span>
                         </h2>
                         <div class="alert info" style="margin-bottom:0;">
-                            Tạo đơn ở cột bên trái hoặc chọn mã <code>ORD-...</code> bên dưới để nhận mã <strong>VietQR</strong>, <strong>Link theo dõi chia sẻ</strong> và bảng tiến độ real-time.
+                            Cấu hình chiến dịch ở cột trái và bấm <strong>Xác nhận &amp; Lên lịch Chiến dịch</strong> để xem toàn bộ thiết lập bạn đã chọn, trạng thái đếm ngược tới giờ hẹn và link theo dõi real-time.
                         </div>
                         <div class="empty-flow-steps">
-                            <div class="empty-step"><strong>1. Quét VietQR</strong>Hiển thị QR &amp; nội dung <code>TF...</code> giữ chỗ 30 phút.</div>
-                            <div class="empty-step"><strong>2. Kích hoạt chạy</strong>Tự động qua Webhook hoặc bấm Xác nhận ngay.</div>
-                            <div class="empty-step"><strong>3. Nhận Track Link</strong>Copy link <code>/track.html</code> theo dõi trực tiếp.</div>
+                            <div class="empty-step"><strong>1. Nhập URL &amp; Key</strong>Điền trang đích và key KiotProxy cần chạy.</div>
+                            <div class="empty-step"><strong>2. Chọn Ngày &amp; Giờ VN</strong>Mở thẻ chức năng để chọn khung giờ (hỗ trợ qua đêm).</div>
+                            <div class="empty-step"><strong>3. Nhận Phiếu &amp; Link</strong>Hiển thị cấu hình đã chọn, chờ đúng giờ chạy và link theo dõi.</div>
                         </div>
                     </div>
 
@@ -1321,7 +1562,7 @@
                         <h2>
                             <span class="card-title-group">
                                 <span class="step-badge">3</span>
-                                <span>Đơn: <code id="ao-id">--</code> (<code id="ao-code">--</code>)</span>
+                                <span>Chiến dịch: <code id="ao-id">--</code> (<code id="ao-code">--</code>)</span>
                             </span>
                             <span id="ao-status-pill" class="pill warn">--</span>
                         </h2>
@@ -1330,7 +1571,7 @@
                         <!-- Prominent Shareable Track Link Card -->
                         <div class="track-link-card" id="ao-track-card">
                             <div class="track-link-head">
-                                <span>Link theo dõi đơn hàng độc lập (1-Click Share)</span>
+                                <span>Link theo dõi chiến dịch độc lập (1-Click Share)</span>
                                 <a id="ao-track-open-link" href="/track.html" target="_blank" rel="noopener">Mở trang theo dõi &nearr;</a>
                             </div>
                             <div class="track-link-row">
@@ -1342,74 +1583,35 @@
                             </div>
                         </div>
 
-                        <div class="kv"><span>Tên / URL đích</span><span id="ao-target" class="mono" style="word-break:break-all;text-align:right;max-width:68%;color:var(--text);">--</span></div>
-                        <div class="kv"><span>Proxy Key (đã che)</span><code id="ao-proxy">--</code></div>
-                        <div class="kv"><span>Mục tiêu / Thời lượng / Kiểu</span><span id="ao-plan" style="text-align:right;color:var(--text-soft);">--</span></div>
-                        <div class="kv"><span>Hành vi / Thiết bị</span><span id="ao-profile" style="text-align:right;color:var(--text-soft);">--</span></div>
-                        <div class="kv"><span>Số tiền cần thanh toán</span><strong id="ao-amount" class="num" style="color:var(--emerald-bright);font-size:15px;">--</strong></div>
+                        <!-- Selection Receipt Summary Box (Shown after submit) -->
+                        <div id="ao-selection-summary" class="selection-summary-box">
+                            <div class="selection-summary-title">Cấu hình bạn đã chọn</div>
+                            <div class="kv"><span>Tên / URL đích</span><span id="ao-target" class="mono" style="word-break:break-all;text-align:right;max-width:68%;color:var(--text);">--</span></div>
+                            <div class="kv"><span>Proxy Key (đã che)</span><code id="ao-proxy">--</code></div>
+                            <div class="kv"><span>Lịch chạy (Giờ VN)</span><strong id="ao-schedule-window" style="text-align:right;color:var(--emerald-bright);">--</strong></div>
+                            <div class="kv hidden" id="ao-wait-row"><span>Đếm ngược tới giờ bắt đầu</span><strong id="ao-wait-countdown" class="num" style="color:var(--amber);">--</strong></div>
+                            <div class="kv"><span>Mục tiêu / Thời lượng / Kiểu</span><span id="ao-plan" style="text-align:right;color:var(--text-soft);">--</span></div>
+                            <div class="kv"><span>Hành vi / Thiết bị</span><span id="ao-profile" style="text-align:right;color:var(--text-soft);">--</span></div>
+                            <div class="kv" style="border-bottom:none;padding-bottom:0;"><span>Tùy chọn IP &amp; Link con</span><span id="ao-toggles" style="text-align:right;color:var(--text-soft);">--</span></div>
+                        </div>
 
-                        <!-- VietQR Payment Box -->
-                        <div id="ao-payment-box" style="margin-top:14px; padding-top:14px; border-top:1px solid var(--border);">
-                            <h3 style="margin-top:0;">Thanh toán VietQR (Khóa 0 click cho tới khi xác nhận)</h3>
-                            <div class="alert warn">
-                                <strong>Pre-Payment Lock:</strong> Đơn <code>pending_payment</code> chưa được cấp phát campaign và chạy <strong>0 lượt truy cập</strong>.
-                            </div>
-                            <div class="qr-layout">
-                                <div class="qr-box">
-                                    <img id="ao-qr-img" class="hidden" alt="VietQR Thanh toán">
-                                    <div id="ao-qr-fallback" class="hidden" style="color:#0f172a;font-size:12px;padding:8px;">
-                                        Không tải được ảnh VietQR (kiểm tra mạng). Vui lòng chuyển khoản thủ công theo thông tin bên cạnh.
-                                    </div>
-                                    <div style="color:#0f172a;font-size:11.5px;margin-top:6px;">Hạn thanh toán: <strong id="ao-countdown" class="num">30:00</strong></div>
-                                </div>
-                                <div>
-                                    <div class="kv"><span>Ngân hàng</span><strong id="ao-bank">--</strong></div>
-                                    <div class="kv">
-                                        <span>Số tài khoản</span>
-                                        <span style="display:inline-flex;align-items:center;gap:6px;">
-                                            <code id="ao-acc-num">--</code>
-                                            <button type="button" class="btn btn-sm" id="copy-acc-btn">
-                                                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                                                <span class="btn-label">Copy</span>
-                                            </button>
-                                        </span>
-                                    </div>
-                                    <div class="kv"><span>Chủ tài khoản</span><span id="ao-acc-name">--</span></div>
-                                    <div class="kv">
-                                        <span>Số tiền chính xác</span>
-                                        <span style="display:inline-flex;align-items:center;gap:6px;">
-                                            <strong id="ao-pay-amount" class="num" style="color:var(--emerald-bright);">--</strong>
-                                            <button type="button" class="btn btn-sm" id="copy-amt-btn">
-                                                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                                                <span class="btn-label">Copy</span>
-                                            </button>
-                                        </span>
-                                    </div>
-                                    <div class="kv">
-                                        <span>Nội dung CK (Bắt buộc)</span>
-                                        <span style="display:inline-flex;align-items:center;gap:6px;">
-                                            <code id="ao-memo" style="color:var(--accent);font-weight:700;">--</code>
-                                            <button type="button" class="btn btn-sm" id="copy-memo-btn">
-                                                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                                                <span class="btn-label">Copy</span>
-                                            </button>
-                                        </span>
-                                    </div>
-                                    <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:12px;">
-                                        <button type="button" class="btn btn-primary hidden" id="inline-admin-confirm-btn">
-                                            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
-                                            <span class="btn-label">Xác nhận &amp; Chạy ngay</span>
-                                        </button>
-                                        <button type="button" class="btn" id="recheck-order-btn">
-                                            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-                                            <span class="btn-label">Kiểm tra thanh toán</span>
-                                        </button>
-                                    </div>
-                                    <div id="guest-pay-hint" class="hint" style="margin-top:8px;">
-                                        Sau khi chuyển khoản đúng nội dung <code>TF...</code> (webhook tự động) hoặc bấm <strong>Đăng nhập Admin</strong> để duyệt đơn thủ công.
-                                    </div>
-                                </div>
-                            </div>
+                        <!-- Hidden Legacy Payment Box (kept dormant while Payment UI is deferred) -->
+                        <div id="ao-payment-box" class="hidden" aria-hidden="true">
+                            <span id="ao-amount" class="num">--</span>
+                            <img id="ao-qr-img" class="hidden" alt="">
+                            <div id="ao-qr-fallback" class="hidden"></div>
+                            <strong id="ao-countdown">30:00</strong>
+                            <strong id="ao-bank">--</strong>
+                            <code id="ao-acc-num">--</code>
+                            <button type="button" class="btn btn-sm" id="copy-acc-btn"><span class="btn-label">Copy</span></button>
+                            <span id="ao-acc-name">--</span>
+                            <strong id="ao-pay-amount">--</strong>
+                            <button type="button" class="btn btn-sm" id="copy-amt-btn"><span class="btn-label">Copy</span></button>
+                            <code id="ao-memo">--</code>
+                            <button type="button" class="btn btn-sm" id="copy-memo-btn"><span class="btn-label">Copy</span></button>
+                            <button type="button" class="btn btn-primary hidden" id="inline-admin-confirm-btn"><span class="btn-label">Xác nhận &amp; Chạy ngay</span></button>
+                            <button type="button" class="btn" id="recheck-order-btn"><span class="btn-label">Kiểm tra</span></button>
+                            <div id="guest-pay-hint"></div>
                         </div>
 
                         <!-- Live Execution Progress Box -->
@@ -1518,10 +1720,11 @@
                         <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
                             <select id="adm-filter" style="width:auto; padding:5px 9px; font-size:12px;">
                                 <option value="all">Tất cả trạng thái</option>
-                                <option value="pending_payment">Chờ thanh toán</option>
+                                <option value="waiting">Chờ tới giờ hẹn</option>
                                 <option value="running">Đang chạy</option>
                                 <option value="completed">Hoàn tất</option>
-                                <option value="expired">Hết hạn thanh toán</option>
+                                <option value="pending_payment">Chờ thanh toán</option>
+                                <option value="expired">Hết hạn</option>
                                 <option value="stopped">Đã dừng</option>
                             </select>
                             <button type="button" class="btn btn-sm" id="adm-refresh-orders-btn">

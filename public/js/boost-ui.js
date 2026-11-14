@@ -83,13 +83,8 @@
         const pwBanner = $('admin-default-pw-banner');
 
         if (pricing) {
-            const specEl = $('spec-pricing');
             const cRateEl = $('c-rate');
             const cHrateEl = $('c-hrate');
-            if (specEl) {
-                specEl.textContent =
-                    `${Number(pricing.clickRate || 40).toLocaleString('vi-VN')} VNĐ/click + Math.ceil(giờ) × ${Number(pricing.hourlyRate || 2000).toLocaleString('vi-VN')} VNĐ`;
-            }
             if (cRateEl) cRateEl.textContent = Number(pricing.clickRate || 40).toLocaleString('vi-VN');
             if (cHrateEl) cHrateEl.textContent = Number(pricing.hourlyRate || 2000).toLocaleString('vi-VN');
         }
@@ -167,14 +162,29 @@
         el.innerHTML = `<div class="alert ${kind}" style="margin-top:6px;">${esc(msg)}</div>`;
     }
 
+    function setPreviewFooterButton(footer, labelText) {
+        if (!footer) return;
+        if (!labelText) {
+            if (footer.firstChild) footer.innerHTML = '';
+            return;
+        }
+        const existingBtn = footer.querySelector('button[data-action="toggle-preview-slices"]');
+        const labelSpan = existingBtn ? existingBtn.querySelector('.btn-label') : null;
+        if (existingBtn && labelSpan) {
+            labelSpan.textContent = labelText;
+            return;
+        }
+        footer.innerHTML = `<button type="button" class="btn btn-sm" data-action="toggle-preview-slices"><span class="btn-label">${esc(labelText)}</span></button>`;
+    }
+
     function renderDistributionPreview({ targetClicks, durationHours, mode, customBlocks }, state) {
         const tbody = $('dist-preview-body');
         const footer = $('dist-preview-footer');
         const capAlert = $('dist-capacity-alert');
         const intervalPill = $('dist-interval-pill');
-        if (footer) footer.innerHTML = '';
 
         if (!global.TimeDistribution || !Number.isInteger(targetClicks) || targetClicks <= 0 || !Number.isFinite(durationHours) || durationHours <= 0) {
+            setPreviewFooterButton(footer, '');
             if (intervalPill) intervalPill.textContent = '--';
             if (capAlert) capAlert.innerHTML = '';
             if (tbody) tbody.innerHTML = '<tr><td colspan="4" style="color:var(--muted)">Nhập số click nguyên (≥ 1) &amp; thời gian &gt; 0 để xem trước phân bổ.</td></tr>';
@@ -182,6 +192,7 @@
         }
 
         if (durationHours > S.MAX_PREVIEW_HOURS) {
+            setPreviewFooterButton(footer, '');
             const avgIntervalSec = Number(((durationHours * 3600) / targetClicks).toFixed(1));
             if (intervalPill) intervalPill.textContent = `TB ~${avgIntervalSec}s / click`;
             if (capAlert) {
@@ -204,6 +215,7 @@
         });
 
         if (!dist.valid) {
+            setPreviewFooterButton(footer, '');
             if (intervalPill) intervalPill.textContent = '--';
             if (capAlert) capAlert.innerHTML = '';
             if (tbody) tbody.innerHTML = '<tr><td colspan="4" style="color:var(--muted)">Không thể tính phân bổ với thông số này.</td></tr>';
@@ -241,11 +253,11 @@
                 <td><strong>${restQuota.toLocaleString('vi-VN')}</strong></td>
                 <td>${esc(restPercent)}%</td>
             </tr>`;
-            if (footer) {
-                footer.innerHTML = `<button type="button" class="btn btn-sm" data-action="toggle-preview-slices"><span class="btn-label">Hiển thị đủ ${allRows.length} khung giờ (đang gộp ${rest.length} khung cuối)</span></button>`;
-            }
-        } else if (allRows.length > S.COLLAPSED_PREVIEW_LIMIT && footer) {
-            footer.innerHTML = `<button type="button" class="btn btn-sm" data-action="toggle-preview-slices"><span class="btn-label">Thu gọn về ${S.COLLAPSED_PREVIEW_LIMIT} khung giờ + tổng phần còn lại</span></button>`;
+            setPreviewFooterButton(footer, `Hiển thị đủ ${allRows.length} khung giờ (đang gộp ${rest.length} khung cuối)`);
+        } else if (allRows.length > S.COLLAPSED_PREVIEW_LIMIT) {
+            setPreviewFooterButton(footer, `Thu gọn về ${S.COLLAPSED_PREVIEW_LIMIT} khung giờ + tổng phần còn lại`);
+        } else {
+            setPreviewFooterButton(footer, '');
         }
 
         if (tbody) {
@@ -352,13 +364,34 @@
         }
         $('ao-target').textContent = `${o.name ? o.name + ' — ' : ''}${o.targetUrl || ''}`;
         $('ao-proxy').textContent = o.proxyKeyMasked || '--';
+        const schedSummaryEl = $('ao-schedule-window');
+        if (schedSummaryEl) {
+            schedSummaryEl.textContent = S.formatScheduleWindowSummary(o);
+        }
+        const waitRowEl = $('ao-wait-row');
+        const waitTargetMs = Number(o.scheduledStartAt || prog.startTime || 0);
+        const showWaitingCountdown = effectiveStatus === 'waiting' && waitTargetMs > Date.now();
+        if (waitRowEl) {
+            waitRowEl.classList.toggle('hidden', !showWaitingCountdown);
+        }
+        if (showWaitingCountdown && hooks.onStartWaitCountdown) {
+            hooks.onStartWaitCountdown(waitTargetMs);
+        } else if (!showWaitingCountdown && hooks.onStopWaitCountdown) {
+            hooks.onStopWaitCountdown();
+        }
+
         const schedLabel = o.scheduleMode === 'even' ? 'Even' : (o.scheduleMode === 'custom' ? 'Custom' : 'Smart');
-        $('ao-plan').textContent = `${Number(o.targetClicks || 0).toLocaleString('vi-VN')} clicks / ${o.durationHours}h (${schedLabel}) · Request HTTP`;
+        const durText = S.formatDurationCompactVi(o.durationHours);
+        $('ao-plan').textContent = `${Number(o.targetClicks || 0).toLocaleString('vi-VN')} clicks · ${durText} · Phân bổ ${schedLabel}`;
         const profileEl = $('ao-profile');
         if (profileEl) {
             profileEl.textContent = `${S.formatDwellLabel(o.dwellPreset || prog.dwellPreset)} · ${S.formatDeviceLabel(o.deviceProfile || prog.deviceProfile)}`;
         }
-        $('ao-amount').textContent = fmtVnd(o.totalAmount);
+        const togglesEl = $('ao-toggles');
+        if (togglesEl) {
+            togglesEl.textContent = `Chống trùng IP: ${o.dedupIp !== false ? 'Bật' : 'Tắt'} · Click link con: ${o.randomLinks !== false ? 'Bật' : 'Tắt'}`;
+        }
+        if ($('ao-amount')) $('ao-amount').textContent = fmtVnd(o.totalAmount);
 
         const pill = $('ao-status-pill');
         if (effectiveStatus === 'completed') {
@@ -368,7 +401,7 @@
             if (hooks.onStopQrCountdown) hooks.onStopQrCountdown();
         } else if (isExpired) {
             pill.className = 'pill warn';
-            pill.textContent = isPaid ? 'Hết giờ chạy' : 'Hết hạn thanh toán (Quá 30 phút)';
+            pill.textContent = isPaid ? 'Hết giờ chạy' : 'Hết hạn';
             if (hooks.onStopPolling) hooks.onStopPolling();
             if (hooks.onStopQrCountdown) hooks.onStopQrCountdown();
         } else if (effectiveStatus === 'stopped') {
@@ -376,54 +409,24 @@
             pill.textContent = 'Đã dừng';
             if (hooks.onStopPolling) hooks.onStopPolling();
             if (hooks.onStopQrCountdown) hooks.onStopQrCountdown();
+        } else if (effectiveStatus === 'waiting') {
+            pill.className = 'pill warn';
+            pill.textContent = 'Chờ tới giờ hẹn';
+            if (hooks.onStopQrCountdown) hooks.onStopQrCountdown();
         } else if (!isPaid) {
             pill.className = 'pill warn';
-            pill.textContent = 'Chờ thanh toán (Khóa 0 click)';
+            pill.textContent = 'Chờ kích hoạt';
         } else {
             pill.className = 'pill info';
-            pill.textContent = 'Đã thanh toán · Đang chạy';
+            pill.textContent = 'Đang chạy';
             if (hooks.onStopQrCountdown) hooks.onStopQrCountdown();
         }
 
+        // Payment UI is intentionally deferred/hidden on /boost
         const payBox = $('ao-payment-box');
-        if (!isPaid && !isExpired) {
-            payBox.classList.remove('hidden');
-            const bank = o.bankInfo || state.config.bankInfo || {};
-            const img = $('ao-qr-img');
-            const fb = $('ao-qr-fallback');
-            if (o.vietQrUrl) {
-                if (img.getAttribute('src') !== o.vietQrUrl) {
-                    fb.classList.add('hidden');
-                    img.classList.remove('hidden');
-                    img.onload = () => {
-                        fb.classList.add('hidden');
-                        img.classList.remove('hidden');
-                    };
-                    img.onerror = () => {
-                        img.classList.add('hidden');
-                        fb.classList.remove('hidden');
-                    };
-                    img.src = o.vietQrUrl;
-                }
-            } else {
-                img.removeAttribute('src');
-                img.classList.add('hidden');
-                fb.classList.remove('hidden');
-            }
-            $('ao-bank').textContent = `${bank.bankName || bank.bankId || '--'} (${bank.bankId || '--'})`;
-            $('ao-acc-num').textContent = bank.accountNumber || '--';
-            $('ao-acc-name').textContent = bank.accountName || '--';
-            $('ao-pay-amount').textContent = fmtVnd(o.totalAmount);
-            $('ao-memo').textContent = o.orderCode || '--';
-            const expiresAt = o.expiresAt || ((o.createdAt || Date.now()) + S.ORDER_EXPIRE_MS);
-            if (hooks.onStartQrCountdown) hooks.onStartQrCountdown(expiresAt);
-
-            $('inline-admin-confirm-btn').classList.toggle('hidden', !isAdmin);
-            $('guest-pay-hint').classList.toggle('hidden', isAdmin);
-        } else {
-            payBox.classList.add('hidden');
-            $('inline-admin-confirm-btn').classList.add('hidden');
-        }
+        if (payBox) payBox.classList.add('hidden');
+        if ($('inline-admin-confirm-btn')) $('inline-admin-confirm-btn').classList.add('hidden');
+        if (hooks.onStopQrCountdown) hooks.onStopQrCountdown();
 
         const target = Math.max(1, Number(prog.targetLimit || o.targetClicks || 1));
         const success = Number(prog.successVisits || 0);
@@ -438,7 +441,7 @@
 
         if (isExpired && !isPaid) {
             const expTime = o.expiresAt || ((o.createdAt || Date.now()) + S.ORDER_EXPIRE_MS);
-            $('ao-time-text').textContent = `Hết hạn lúc: ${fmtTime(expTime)} (quá ${S.ORDER_EXPIRE_MINUTES} phút chưa thanh toán)`;
+            $('ao-time-text').textContent = `Hết hạn lúc: ${S.formatVnDateTime(expTime)}`;
         } else if (isDone) {
             const endedAt = prog.actualEndTime || o.completedAt || prog.endTime;
             const startedAt = prog.actualStartTime || o.paidAt || prog.startTime;
@@ -446,9 +449,13 @@
             if (endedAt && startedAt && endedAt >= startedAt && global.TimeDistribution && typeof global.TimeDistribution.formatDuration === 'function') {
                 durSuffix = ` · Thời lượng: ${global.TimeDistribution.formatDuration(endedAt - startedAt)}`;
             }
-            $('ao-time-text').textContent = endedAt ? `Kết thúc thực tế: ${fmtTime(endedAt)}${durSuffix}` : `Hoàn tất (Tạo lúc: ${fmtTime(o.createdAt)})`;
+            $('ao-time-text').textContent = endedAt ? `Kết thúc thực tế: ${S.formatVnDateTime(endedAt)}${durSuffix}` : `Hoàn tất (Tạo lúc: ${S.formatVnDateTime(o.createdAt)})`;
+        } else if (effectiveStatus === 'waiting' && (o.scheduledStartAt || prog.startTime)) {
+            const sAt = Number(o.scheduledStartAt || prog.startTime);
+            const eAt = Number(o.scheduledEndAt || prog.endTime);
+            $('ao-time-text').textContent = `Bắt đầu: ${S.formatVnDateTime(sAt)} → Kết thúc: ${S.formatVnDateTime(eAt)} (Giờ VN)`;
         } else {
-            $('ao-time-text').textContent = prog.endTime ? `Dự kiến kết thúc: ${fmtTime(prog.endTime)}` : `Tạo lúc: ${fmtTime(o.createdAt)}`;
+            $('ao-time-text').textContent = prog.endTime ? `Dự kiến kết thúc: ${S.formatVnDateTime(prog.endTime)}` : `Tạo lúc: ${S.formatVnDateTime(o.createdAt)}`;
         }
 
         $('st-success').textContent = success.toLocaleString('vi-VN');
@@ -502,7 +509,8 @@
                 <td style="max-width:250px; word-break:break-all;">
                     <strong>${esc(o.name || o.orderCode)}</strong><br>
                     <span class="hint">${esc(o.targetUrl)}</span><br>
-                    <span class="hint">Key: <code>${esc(o.proxyKeyMasked || '')}</code> · ${esc(o.scheduleMode || 'smart')} · ${esc(S.normalizeDwellPreset(o.dwellPreset))}/${esc(S.normalizeDeviceProfile(o.deviceProfile))}</span>
+                    <span class="hint">Key: <code>${esc(o.proxyKeyMasked || '')}</code> · ${esc(o.scheduleMode || 'smart')} · ${esc(S.normalizeDwellPreset(o.dwellPreset))}/${esc(S.normalizeDeviceProfile(o.deviceProfile))}</span><br>
+                    <span class="hint">${esc(S.formatScheduleWindowSummary(o))}</span>
                 </td>
                 <td>${fmtVnd(o.totalAmount)}</td>
                 <td>

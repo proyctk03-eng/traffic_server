@@ -351,8 +351,14 @@ describe('Cloudflare Integration, CORS/Bearer Auth & Static Demo Dual-Mode', () 
             assert.match(await page.textContent('#runtime-mode-pill'), /Static Demo/);
             assert.equal(await page.isHidden('#open-login-btn'), true, 'Open-access Static Demo must hide login button');
             assert.equal(await page.isHidden('#auth-pill'), true, 'Open-access Static Demo must hide guest auth pill');
+            assert.equal(await page.isHidden('#cost-box'), true, 'Payment pricing box must stay hidden');
+            assert.equal(await page.$eval('#acc-target', el => el.open), true);
+            assert.equal(await page.$eval('#acc-schedule', el => el.open), false);
+            assert.equal(await page.$eval('#acc-behavior', el => el.open), false);
 
-            // Verify Toggle Switch & Tab 2 Admin immediate access in Static Demo
+            // Expand #acc-behavior and toggle Switch; expand #acc-schedule and pick duration/window
+            await page.click('#acc-behavior > summary');
+            assert.equal(await page.$eval('#acc-behavior', el => el.open), true);
             assert.equal(await page.isChecked('#f-dedup'), true);
             await page.click('label[for="f-dedup"]');
             assert.equal(await page.isChecked('#f-dedup'), false);
@@ -362,25 +368,28 @@ describe('Cloudflare Integration, CORS/Bearer Auth & Static Demo Dual-Mode', () 
             await page.fill('#f-name', 'Offline Pages Sim');
             await page.fill('#f-url', 'https://example.org/demo');
             await page.fill('#f-proxy', 'K_STATIC_SIM_KEY_01');
+            await page.click('#acc-schedule > summary');
+            assert.equal(await page.$eval('#acc-schedule', el => el.open), true);
+            // Switch to duration mode for fast demo completion test
+            await page.click('#btn-sched-duration');
             await page.fill('#f-clicks', '3');
             await page.fill('#f-hours', '0.5');
             await page.waitForFunction(() =>
-                document.getElementById('c-total')?.textContent?.includes('2.120') &&
                 document.getElementById('dist-interval-pill')?.textContent?.includes('600s') &&
-                document.getElementById('dist-preview-card')?.open === true
+                document.getElementById('dist-preview-card')?.open === true &&
+                document.getElementById('sum-schedule')?.textContent?.includes('3 clicks')
             );
             await page.click('#submit-order-btn');
 
             await page.waitForSelector('#active-order-panel:not(.hidden)');
             const simOrderId = (await page.textContent('#ao-id')).trim();
             assert.ok(simOrderId.startsWith('ORD-'));
-            assert.match(await page.textContent('#ao-status-pill'), /Chờ thanh toán/);
+            assert.equal(await page.isHidden('#ao-payment-box'), true, 'Payment box must stay hidden in Static Demo');
+            await page.waitForSelector('#ao-selection-summary:not(.hidden)');
             await page.waitForSelector('#ao-track-card:not(.hidden)');
             assert.ok((await page.textContent('#ao-track-link')).includes(`orderId=${simOrderId}`));
 
-            // Confirm immediately in Open-Access Static Demo without logging in
-            await page.waitForSelector('#inline-admin-confirm-btn:not(.hidden)');
-            await page.click('#inline-admin-confirm-btn');
+            // Auto-launched campaign finishes simulation directly without manual payment confirm
             await page.waitForFunction(
                 () => document.getElementById('ao-status-pill')?.textContent?.includes('Đã hoàn thành'),
                 null,
@@ -408,6 +417,8 @@ describe('Cloudflare Integration, CORS/Bearer Auth & Static Demo Dual-Mode', () 
             await page.fill('#f-name', 'Cross-Origin Tunnel Real');
             await page.fill('#f-url', `http://127.0.0.1:${targetPort}/cross-origin-hit`);
             await page.fill('#f-proxy', 'K_REMOTE_TUNNEL_KEY_01');
+            await page.click('#acc-schedule > summary');
+            await page.click('#btn-sched-duration');
             await page.fill('#f-clicks', '1');
             await page.fill('#f-hours', '0.001');
             await page.click('#submit-order-btn');
@@ -417,8 +428,6 @@ describe('Cloudflare Integration, CORS/Bearer Auth & Static Demo Dual-Mode', () 
             env.trackOrder(realOrderId);
             env.trackProxyKey('K_REMOTE_TUNNEL_KEY_01');
 
-            await page.waitForSelector('#inline-admin-confirm-btn:not(.hidden)');
-            await page.click('#inline-admin-confirm-btn');
             await page.waitForFunction(
                 () => document.getElementById('ao-status-pill')?.textContent?.includes('Đã hoàn thành'),
                 null,

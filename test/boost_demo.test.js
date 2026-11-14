@@ -249,6 +249,116 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
         assert.equal(remoteTrack, 'https://my-tunnel.trycloudflare.com/track.html?orderId=ORD-TUN-789');
     });
 
+    it('Vietnam Time (UTC+7) Schedule Window: same-day 06:00-07:00, overnight 23:00-01:00 (+1d), past-window rejection, and waiting->running autoLaunch', async () => {
+        const S = require('../public/js/boost-shared');
+
+        // 1. Same-day 06:00 -> 07:00 VN time (UTC+7)
+        const nowBeforeMorning = Date.UTC(2026, 10, 15, 0, 0, 0) - S.VN_UTC_OFFSET_MS;
+        const morningWin = S.computeVietnamScheduleWindow({
+            runDate: '2026-11-15',
+            startTime: '06:00',
+            endTime: '07:00',
+            nowMs: nowBeforeMorning
+        });
+        assert.equal(morningWin.valid, true);
+        assert.equal(morningWin.overnight, false);
+        assert.equal(morningWin.durationHours, 1);
+        assert.equal(morningWin.endRunDate, '2026-11-15');
+        assert.equal(morningWin.scheduledStartAt, Date.UTC(2026, 10, 14, 23, 0, 0)); // 06:00 +07:00 == 23:00 UTC prev day
+        assert.equal(morningWin.scheduledEndAt - morningWin.scheduledStartAt, 3600000);
+
+        // 2. Overnight cross-day 23:00 -> 01:00 (+1 day)
+        const overnightWin = S.computeVietnamScheduleWindow({
+            runDate: '2026-11-15',
+            startTime: '23:00',
+            endTime: '01:00',
+            nowMs: nowBeforeMorning
+        });
+        assert.equal(overnightWin.valid, true);
+        assert.equal(overnightWin.overnight, true);
+        assert.equal(overnightWin.endRunDate, '2026-11-16');
+        assert.equal(overnightWin.durationHours, 2);
+        assert.equal(overnightWin.scheduledEndAt - overnightWin.scheduledStartAt, 7200000);
+        assert.match(S.formatScheduleWindowSummary({ ...overnightWin, scheduleType: 'window' }), /Qua đêm \+1 ngày/);
+
+        // 3. Past window & same-time rejection
+        const afterMorning = Date.UTC(2026, 10, 15, 8, 0, 0) - S.VN_UTC_OFFSET_MS;
+        const pastWin = S.computeVietnamScheduleWindow({
+            runDate: '2026-11-15',
+            startTime: '06:00',
+            endTime: '07:00',
+            nowMs: afterMorning
+        });
+        assert.equal(pastWin.valid, false);
+        assert.equal(pastWin.isPast, true);
+        assert.equal(pastWin.code, 'WINDOW_IN_PAST');
+
+        const sameWin = S.computeVietnamScheduleWindow({
+            runDate: '2026-11-15',
+            startTime: '06:00',
+            endTime: '06:00',
+            nowMs: nowBeforeMorning
+        });
+        assert.equal(sameWin.valid, false);
+        assert.equal(sameWin.code, 'SAME_TIME');
+
+        // 4. REQUIRE_AUTH=true security check: unauthenticated autoLaunch=true MUST NOT bypass pre-payment lock
+        const savedAuth = process.env.REQUIRE_AUTH;
+        process.env.REQUIRE_AUTH = 'true';
+        try {
+            const unauthCreate = await env.request('POST', '/api/orders', {
+                body: {
+                    name: 'Unauth AutoLaunch Attempt',
+                    targetUrl: `http://127.0.0.1:${targetPort}/unauth-autolaunch`,
+                    proxyKey: 'K_UNAUTH_AUTO_01',
+                    targetClicks: 1,
+                    durationHours: 1,
+                    autoLaunch: true
+                }
+            });
+            assert.equal(unauthCreate.status, 201);
+            assert.equal(unauthCreate.body.paymentStatus, 'pending_payment');
+            assert.equal(unauthCreate.body.status, 'pending_payment');
+            assert.equal(unauthCreate.body.campaignId, null);
+            env.trackOrder(unauthCreate.body.orderId);
+            env.trackProxyKey('K_UNAUTH_AUTO_01');
+        } finally {
+            if (savedAuth !== undefined) process.env.REQUIRE_AUTH = savedAuth;
+            else delete process.env.REQUIRE_AUTH;
+        }
+
+        // 5. Open-Access autoLaunch=true with Vietnam Schedule Window starts in waiting when scheduled slightly ahead or runs active window
+        const futureWinStart = Date.now() + 3000;
+        const winStartIsoDate = S.getVietnamDateISO(futureWinStart);
+        const startHHMM = S.getVietnamTimeHHMM(futureWinStart);
+        // Since computeVietnamScheduleWindow uses minute granularity (:00 seconds), pick +2 minutes ahead so start > Date.now() cleanly
+        const plus2m = Date.now() + 2 * 60000;
+        const futRes = await env.request('POST', '/api/orders', {
+            body: {
+                name: 'Future Window Waiting Order',
+                targetUrl: `http://127.0.0.1:${targetPort}/future-wait`,
+                proxyKey: 'K_FUTURE_WAIT_01',
+                targetClicks: 1,
+                scheduleType: 'window',
+                runDate: S.getVietnamDateISO(plus2m),
+                startTime: S.getVietnamTimeHHMM(plus2m),
+                endTime: S.getVietnamTimeHHMM(plus2m + 60 * 60000),
+                autoLaunch: true
+            }
+        });
+        assert.equal(futRes.status, 201);
+        assert.equal(futRes.body.autoLaunched, true);
+        assert.equal(futRes.body.status, 'waiting');
+        assert.equal(futRes.body.scheduleType, 'window');
+        assert.ok(futRes.body.campaignId);
+        env.trackOrder(futRes.body.orderId);
+        env.trackCampaign(futRes.body.campaignId);
+        env.trackProxyKey('K_FUTURE_WAIT_01');
+        await new Promise(r => setTimeout(r, 400));
+        assert.equal(targetHits.some(h => h.url === '/future-wait'), false, 'Scheduled future window must remain waiting (0 hits) before startTime');
+        await env.request('POST', `/api/campaigns/${futRes.body.campaignId}/stop`);
+    });
+
     it('Default Open-Access mode: GET / returns 200 directly; /boost, /boost/, modular scripts & /js/timeDistribution.js work; REQUIRE_AUTH=true redirects / -> /login.html', async () => {
         const boostPage = await env.request('GET', '/boost');
         assert.equal(boostPage.status, 200);
@@ -270,7 +380,8 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
 
         const boostJs = await env.request('GET', '/js/boost.js');
         assert.equal(boostJs.status, 200);
-        assert.ok(boostJs.raw.includes('/api/orders/calculate-cost'));
+        assert.ok(boostJs.raw.includes('/api/orders'));
+        assert.ok(boostJs.raw.includes('handleOrderSubmit'));
 
         const distJs = await env.request('GET', '/js/timeDistribution.js');
         assert.equal(distJs.status, 200);
@@ -680,27 +791,52 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
             });
 
             await page.goto(`${env.baseUrl}/boost`, { waitUntil: 'networkidle' });
-            // Open-access mode by default: login controls hidden, Tab 2 immediately unlocked, collapsibles collapsed initially
+            // Open-access mode by default: login controls hidden, Tab 2 unlocked, Accordion UX (3B: only Khối 1 open), Payment UI hidden (5)
             assert.equal(await page.isHidden('#auth-pill'), true, 'Open-access mode must hide #auth-pill');
             assert.equal(await page.isHidden('#open-login-btn'), true, 'Open-access mode must hide #open-login-btn');
             assert.equal(await page.isHidden('#logout-btn'), true, 'Open-access mode must hide #logout-btn');
             assert.equal(await page.$eval('#runtime-conn-details', el => el.open), false, '#runtime-conn-details starts collapsed');
             assert.equal(await page.$eval('#spec-details', el => el.open), false, '#spec-details starts collapsed');
+            assert.equal(await page.$eval('#acc-target', el => el.open), true, '#acc-target opens by default');
+            assert.equal(await page.$eval('#acc-schedule', el => el.open), false, '#acc-schedule starts collapsed with summary pill');
+            assert.equal(await page.$eval('#acc-behavior', el => el.open), false, '#acc-behavior starts collapsed with summary pill');
             assert.equal(await page.$eval('#dist-preview-card', el => el.open), false, '#dist-preview-card starts collapsed');
+            assert.equal(await page.isHidden('#cost-box'), true, 'Payment pricing box #cost-box must stay hidden');
             await page.waitForFunction(() => document.getElementById('socket-pill')?.textContent?.includes('Đã kết nối'));
 
-            // Toggle Switches (#f-dedup, #f-links) work cleanly
+            // Khối 3 Accordion: expand -> toggle #f-dedup -> verify summary pill #sum-behavior updates
+            await page.click('#acc-behavior > summary');
+            assert.equal(await page.$eval('#acc-behavior', el => el.open), true);
             assert.equal(await page.isChecked('#f-dedup'), true);
             await page.click('label[for="f-dedup"]');
             assert.equal(await page.isChecked('#f-dedup'), false);
+            assert.match(await page.textContent('#sum-behavior'), /IP: Tắt/);
             await page.click('label[for="f-dedup"]');
             assert.equal(await page.isChecked('#f-dedup'), true);
+            assert.match(await page.textContent('#sum-behavior'), /IP: Bật/);
+
+            // Khối 2 Accordion: expand -> test Vietnam window presets (06:00-07:00 & overnight 23:00-01:00)
+            await page.click('#acc-schedule > summary');
+            assert.equal(await page.$eval('#acc-schedule', el => el.open), true);
+            await page.click('.window-preset-btn[data-start="23:00"][data-end="01:00"]');
+            assert.equal(await page.isVisible('#window-overnight-badge'), true, '23:00-01:00 must show overnight (+1 day) badge');
+            assert.match(await page.textContent('#sum-schedule'), /\+1 ngày/);
+            assert.match(await page.textContent('#pre-window'), /Qua đêm \+1 ngày/);
+
+            await page.click('.window-preset-btn[data-start="06:00"][data-end="07:00"]');
+            assert.equal(await page.isHidden('#window-overnight-badge'), true, '06:00-07:00 is same-day');
+            assert.match(await page.textContent('#window-calc-text'), /06:00 – 07:00/);
+            assert.match(await page.textContent('#sum-schedule'), /06:00–07:00/);
+
+            // Switch to duration mode for TimeDistribution preview & fractional clicks validation tests
+            await page.click('#btn-sched-duration');
+            assert.equal(await page.isVisible('#sched-duration-fields'), true);
 
             // Fractional clicks guard: must show hint + zero totals WITHOUT hitting 400 API error
             await page.fill('#f-clicks', '1.5');
             await page.waitForTimeout(260);
             assert.equal(await page.textContent('#c-total'), '0 VNĐ');
-            assert.equal(await page.isVisible('#cost-hint'), true);
+            assert.match(await page.textContent('#cost-hint'), /số nguyên dương/);
 
             // Verify custom schedule labels/weights in live DOM & live TimeDistribution preview
             await page.fill('#f-clicks', '1000');
@@ -803,9 +939,8 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
             await page.fill('#f-hours', '0.001');
             const hoursValid = await page.evaluate(() => document.getElementById('f-hours').checkValidity());
             assert.equal(hoursValid, true, '0.001h must pass HTML5 constraint validation');
-            await page.waitForFunction(() => document.getElementById('c-total')?.textContent?.includes('2.040'));
 
-            // Submit order with ZERO account creation
+            // Submit directly without payment UI -> auto-launches & displays #ao-selection-summary + executes HTTP hit
             await page.fill('#f-name', 'Playwright Boost Demo');
             await page.fill('#f-url', `http://127.0.0.1:${targetPort}/pw-boost`);
             await page.fill('#f-proxy', 'K_PW_BROWSER_KEY_01');
@@ -817,20 +952,29 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
             env.trackOrder(createdOrderId);
             env.trackProxyKey('K_PW_BROWSER_KEY_01');
 
-            assert.match(await page.textContent('#ao-status-pill'), /Chờ thanh toán/);
-            assert.equal(await page.isVisible('#ao-qr-img'), true);
-            // Shareable Track Link card is prominently rendered
+            assert.equal(await page.isHidden('#ao-payment-box'), true, 'Payment QR box #ao-payment-box must stay hidden');
+            await page.waitForSelector('#ao-selection-summary:not(.hidden)');
+            assert.match(await page.textContent('#ao-toggles'), /Chống trùng IP: Bật/);
             await page.waitForSelector('#ao-track-card:not(.hidden)');
             assert.ok((await page.textContent('#ao-track-link')).includes(`/track.html?orderId=${createdOrderId}`));
             assert.ok((await page.getAttribute('#ao-track-open-link', 'href')).includes(`/track.html?orderId=${createdOrderId}`));
-            // Open-access mode immediately exposes #inline-admin-confirm-btn & Tab 2 Admin workspace without login
-            assert.equal(await page.isVisible('#inline-admin-confirm-btn'), true);
 
-            // Verify fallback renders when QR img errors without throwing console error
-            await page.evaluate(() => {
-                document.getElementById('ao-qr-img').dispatchEvent(new Event('error'));
-            });
-            assert.equal(await page.isVisible('#ao-qr-fallback'), true);
+            // Wait for immediate auto-launched execution to finish
+            await page.waitForFunction(
+                () => document.getElementById('ao-status-pill')?.textContent?.includes('Đã hoàn thành'),
+                null,
+                { timeout: 15000 }
+            );
+            const campId = (await page.textContent('#ao-camp-id')).trim();
+            assert.ok(campId && campId !== 'Chưa kích hoạt');
+            env.trackCampaign(campId);
+
+            // Live worker log accordion starts collapsed and receives real-time [C<id>] logs
+            assert.equal(await page.$eval('#ao-admin-log-wrap', el => el.open), false, '#ao-admin-log-wrap starts collapsed');
+            await page.click('#ao-admin-log-wrap > summary');
+            assert.equal(await page.$eval('#ao-admin-log-wrap', el => el.open), true);
+            assert.match(await page.textContent('#ao-worker-log'), new RegExp(`\\[C${campId}\\]`));
+            assert.ok(targetHits.some(h => h.url === '/pw-boost'), 'Auto-launched order must deliver HTTP hit');
 
             // Reload page with ?orderId=... and confirm localStorage + tracking restore
             await page.reload({ waitUntil: 'networkidle' });
@@ -854,26 +998,18 @@ describe('Boost Demo Web (/boost) & Platform Fidelity', () => {
             assert.equal((await page.textContent('#lookup-order-msg')).trim(), '');
             assert.equal((await page.textContent('#ao-id')).trim(), createdOrderId);
 
-            // Confirm directly in default Open-Access mode (no login required!) & verify execution
-            await page.waitForSelector('#inline-admin-confirm-btn:not(.hidden)');
-            await page.click('#inline-admin-confirm-btn');
-
-            await page.waitForFunction(
-                () => document.getElementById('ao-status-pill')?.textContent?.includes('Đã hoàn thành'),
-                null,
-                { timeout: 15000 }
-            );
-            const campId = (await page.textContent('#ao-camp-id')).trim();
-            assert.ok(campId && campId !== 'Chưa kích hoạt');
-            env.trackCampaign(campId);
-
             assert.equal((await page.textContent('#st-success')).trim(), '1');
             assert.match(await page.textContent('#ao-time-text'), /^Kết thúc thực tế:/);
-            assert.equal(await page.$eval('#ao-admin-log-wrap', el => el.open), false, '#ao-admin-log-wrap starts collapsed');
-            await page.click('#ao-admin-log-wrap > summary');
-            assert.equal(await page.$eval('#ao-admin-log-wrap', el => el.open), true);
-            assert.match(await page.textContent('#ao-worker-log'), new RegExp(`\\[C${campId}\\]`));
-            assert.ok(targetHits.some(h => h.url === '/pw-boost'), 'Playwright-confirmed order must deliver HTTP hit');
+
+            // Verify /track.html shows Vietnam schedule window and behavior cleanly
+            await page.goto(`${env.baseUrl}/track.html?orderId=${encodeURIComponent(createdOrderId)}`, { waitUntil: 'networkidle' });
+            await page.waitForSelector('#detailCard:not(.hidden)');
+            assert.match(await page.textContent('#dSchedule'), /Chạy ngay/);
+            assert.match(await page.textContent('#dProfile'), /Nhanh/);
+
+            // Return to /boost for Admin cleanup & REQUIRE_AUTH=true test
+            await page.goto(`${env.baseUrl}/boost?orderId=${encodeURIComponent(createdOrderId)}`, { waitUntil: 'networkidle' });
+            await page.waitForSelector('#active-order-panel:not(.hidden)');
 
             // Switch to Admin tab immediately (no login) and verify order table, server campaigns table, webhook URL, and delete cleanup
             await page.click('[data-tab="admin"]');

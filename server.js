@@ -7,6 +7,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const dns = require('dns').promises;
 const orderService = require('./orderService');
+const BoostShared = require('./public/js/boost-shared');
 
 let HttpProxyAgent = null;
 try {
@@ -1170,6 +1171,13 @@ async function scheduleTick(campaignId) {
                 campaign.status = 'running';
                 campaign.actualStartTime = now;
                 sendLog(campaignId, `Thoi diem bat dau da den! Chien dich ${campaignId} bat dau chay.`, 'system');
+                if (campaign.orderId) {
+                    try {
+                        orderService.updateOrderStatus(campaign.orderId, 'running');
+                        io.to(`order:${campaign.orderId}`).emit('order-progress', buildOrderProgressPayload(campaign, null));
+                        io.to('admins').emit('orders-updated');
+                    } catch (e) {}
+                }
                 io.emit('status-update', { campaignId, status: 'running', isRunning: true });
                 emitCampaignList();
             } else {
@@ -1705,6 +1713,20 @@ app.post('/api/orders/calculate-cost', (req, res) => {
 app.post('/api/orders', publicApiLimiter, (req, res) => {
     try {
         const order = orderService.createOrder(req.body);
+        if (req.body && req.body.autoLaunch === true && req.userRole === 'admin') {
+            const act = activateOrder(order.orderId, { paymentMethod: 'direct_schedule' });
+            if (!act.ok) {
+                return res.status(act.code || 400).json({ success: false, message: act.message });
+            }
+            const latest = orderService.getOrder(order.orderId) || order;
+            return res.status(201).json({
+                success: true,
+                ...latest,
+                autoLaunched: true,
+                campaignId: act.campaignId,
+                orderStatus: act.status
+            });
+        }
         io.to('admins').emit('orders-updated');
         res.status(201).json({ success: true, ...order });
     } catch (err) {
@@ -1752,8 +1774,9 @@ function activateOrder(orderId, paymentInfo = {}) {
         orderService.confirmOrderPayment(order.orderId, paymentInfo);
 
         const campaignId = generateCampaignId();
-        const startTime = Date.now();
-        const endTime = startTime + Math.round(order.durationHours * 3600000);
+        const useWindow = order.scheduleType === 'window' && Number.isFinite(Number(order.scheduledStartAt)) && Number.isFinite(Number(order.scheduledEndAt));
+        const startTime = useWindow ? Number(order.scheduledStartAt) : Date.now();
+        const endTime = useWindow ? Number(order.scheduledEndAt) : (startTime + Math.round(order.durationHours * 3600000));
 
         const dwellBounds = orderService.resolveDwellBounds(order.dwellPreset);
         const campaignConfig = {
@@ -1762,10 +1785,15 @@ function activateOrder(orderId, paymentInfo = {}) {
             targetClicks: order.targetClicks,
             startTime,
             endTime,
-            startTimeStr: new Date(startTime).toLocaleString('vi-VN'),
-            endTimeStr: new Date(endTime).toLocaleString('vi-VN'),
+            startTimeStr: BoostShared.formatVnDateTime(startTime),
+            endTimeStr: BoostShared.formatVnDateTime(endTime),
             scheduleMode: ['even', 'custom'].includes(order.scheduleMode) ? order.scheduleMode : 'smart',
             customBlocks: order.scheduleMode === 'custom' ? (order.customBlocks || null) : null,
+            scheduleType: order.scheduleType || 'duration',
+            runDate: order.runDate || null,
+            endRunDate: order.endRunDate || null,
+            overnight: Boolean(order.overnight),
+            timezone: order.timezone || 'Asia/Ho_Chi_Minh',
             browserMode: 'request',
             cleanMode: 'incognito',
             dwellMin: dwellBounds.min,
@@ -1783,25 +1811,34 @@ function activateOrder(orderId, paymentInfo = {}) {
         registerCustomerProxyKey(order.proxyKey);
 
         const campaignState = createCampaignState(campaignId, campaignConfig);
-        campaignState.status = 'running';
-        campaignState.actualStartTime = Date.now();
+        if (campaignState.status === 'expired' && !useWindow) {
+            campaignState.status = 'running';
+        }
+        if (campaignState.status === 'running') {
+            campaignState.actualStartTime = Date.now();
+        }
         campaigns.set(campaignId, campaignState);
         saveCampaignConfig(campaignId, campaignConfig);
 
         // Link order <-> campaign immediately (persisted) so duplicate confirms/restarts never create a second campaign
-        orderService.updateOrderStatus(order.orderId, 'running', { campaignId });
+        orderService.updateOrderStatus(order.orderId, campaignState.status, { campaignId });
 
-        const confirmPayload = { orderId: order.orderId, campaignId, status: 'paid' };
+        const confirmPayload = { orderId: order.orderId, campaignId, status: 'paid', orderStatus: campaignState.status };
         io.to(`order:${order.orderId}`).emit('payment-confirmed', confirmPayload);
+        io.to(`order:${order.orderId}`).emit('order-progress', buildOrderProgressPayload(campaignState, order));
         io.to('admins').emit('payment-confirmed', confirmPayload);
         io.to('admins').emit('orders-updated');
-        io.to('admins').emit('status-update', { campaignId, status: 'running', isRunning: true });
+        io.to('admins').emit('status-update', {
+            campaignId,
+            status: campaignState.status,
+            isRunning: ['running', 'waiting'].includes(campaignState.status)
+        });
         emitCampaignList();
         emitStats(campaignId);
 
         scheduleTick(campaignId).catch(err => console.error(`Scheduler Error auto-activated C${campaignId}:`, err.message));
 
-        return { ok: true, already: false, orderId: order.orderId, campaignId, status: 'running' };
+        return { ok: true, already: false, orderId: order.orderId, campaignId, status: campaignState.status };
     } finally {
         activatingOrders.delete(order.orderId);
     }

@@ -117,15 +117,23 @@
         stopDemoCampaignTimer(orderId);
         const db0 = loadDemoDb();
         const ord0 = db0.orders.find(o => o.orderId === orderId);
-        if (!ord0 || ord0.paymentStatus !== 'paid' || ord0.status !== 'running') return;
+        if (!ord0 || ord0.paymentStatus !== 'paid' || !['running', 'waiting'].includes(ord0.status)) return;
         const cid = ord0.campaignId;
         const dwellLabel = S.formatDwellLabel(ord0.dwellPreset);
         const deviceLabel = S.formatDeviceLabel(ord0.deviceProfile);
-        hooks.onEmitLog(
-            cid,
-            `[DEMO SIM] Khoi chay chien dich mo phong -> ${ord0.targetUrl} (${ord0.targetClicks} luot, ${ord0.scheduleMode}, ${dwellLabel}, ${deviceLabel})`,
-            'system'
-        );
+        if (ord0.status === 'waiting') {
+            hooks.onEmitLog(
+                cid,
+                `[DEMO SIM] Đã lên lịch chạy: ${S.formatScheduleWindowSummary(ord0)} (chờ tới giờ hẹn)`,
+                'info'
+            );
+        } else {
+            hooks.onEmitLog(
+                cid,
+                `[DEMO SIM] Khoi chay chien dich mo phong -> ${ord0.targetUrl} (${ord0.targetClicks} luot, ${ord0.scheduleMode}, ${dwellLabel}, ${deviceLabel})`,
+                'system'
+            );
+        }
 
         const batchStep = Math.max(1, Math.ceil((ord0.targetClicks || 1) / 14));
         const timer = setInterval(() => {
@@ -136,9 +144,24 @@
             const db = loadDemoDb();
             const ord = db.orders.find(o => o.orderId === orderId);
             const camp = db.campaigns.find(c => String(c.id) === String(cid));
-            if (!ord || !camp || ord.status !== 'running') {
+            if (!ord || !camp || !['running', 'waiting'].includes(ord.status)) {
                 stopDemoCampaignTimer(orderId);
                 return;
+            }
+            const now = Date.now();
+            if (ord.status === 'waiting') {
+                if (camp.startTime && now < Number(camp.startTime)) {
+                    return;
+                }
+                ord.status = 'running';
+                camp.status = 'running';
+                camp.actualStartTime = now;
+                saveDemoDb(db);
+                hooks.onEmitLog(
+                    cid,
+                    `[DEMO SIM] Đã tới giờ hẹn! Bắt đầu chạy -> ${ord.targetUrl} (${ord.targetClicks} lượt)`,
+                    'system'
+                );
             }
             const remaining = Math.max(0, ord.targetClicks - (ord.successVisits || 0));
             const inc = Math.min(remaining, batchStep);
@@ -182,7 +205,7 @@
         const db = loadDemoDb();
         expireStaleDemoOrders(db);
         for (const ord of db.orders) {
-            if (ord.paymentStatus === 'paid' && ord.status === 'running') {
+            if (ord.paymentStatus === 'paid' && ['running', 'waiting'].includes(ord.status)) {
                 startDemoCampaignSimulation(ord.orderId);
             }
         }
@@ -327,12 +350,54 @@
             return demoJsonRes(200, { success: true, ...calc });
         }
 
+        function activateDemoOrder(ord) {
+            if (!ord || ord.campaignId) return null;
+            const cid = String(db.nextCampSeq++);
+            const now = Date.now();
+            const useWin = ord.scheduleType === 'window' && Number.isFinite(Number(ord.scheduledStartAt)) && Number.isFinite(Number(ord.scheduledEndAt));
+            const startTime = useWin ? Number(ord.scheduledStartAt) : now;
+            const endTime = useWin ? Number(ord.scheduledEndAt) : (now + Math.round(ord.durationHours * 3600000));
+            const status = startTime > now ? 'waiting' : 'running';
+
+            ord.paymentStatus = 'paid';
+            ord.status = status;
+            ord.paidAt = now;
+            ord.campaignId = cid;
+            const camp = {
+                id: cid,
+                name: ord.name,
+                targetUrl: ord.targetUrl,
+                status,
+                dwellPreset: S.normalizeDwellPreset(ord.dwellPreset),
+                deviceProfile: S.normalizeDeviceProfile(ord.deviceProfile),
+                scheduleType: ord.scheduleType || 'duration',
+                runDate: ord.runDate || null,
+                endRunDate: ord.endRunDate || null,
+                overnight: Boolean(ord.overnight),
+                timezone: ord.timezone || 'Asia/Ho_Chi_Minh',
+                successVisits: 0,
+                failedVisits: 0,
+                totalVisits: 0,
+                uniqueIps: 0,
+                dupIps: 0,
+                targetLimit: ord.targetClicks,
+                startTime,
+                actualStartTime: status === 'running' ? now : null,
+                endTime
+            };
+            db.campaigns.unshift(camp);
+            saveDemoDb(db);
+            startDemoCampaignSimulation(ord.orderId);
+            return camp;
+        }
+
         if (path === '/api/orders' && method === 'POST') {
             const validation = S.validateOrderPayload(body);
             if (!validation.valid) {
                 return demoJsonRes(400, { success: false, message: validation.errors[0] });
             }
             const calc = validation.cost;
+            const winMeta = validation.windowMeta;
             const pKey = String(body.proxyKey || '').trim();
             const createdAt = Date.now();
             const expiresAt = createdAt + S.ORDER_EXPIRE_MS;
@@ -358,6 +423,15 @@
                 browserMode: 'request',
                 scheduleMode: ['even', 'custom'].includes(body.scheduleMode) ? body.scheduleMode : 'smart',
                 customBlocks: body.customBlocks || null,
+                scheduleType: winMeta ? 'window' : 'duration',
+                runDate: winMeta ? winMeta.runDate : null,
+                endRunDate: winMeta ? winMeta.endRunDate : null,
+                startTime: winMeta ? winMeta.startTime : null,
+                endTime: winMeta ? winMeta.endTime : null,
+                overnight: winMeta ? Boolean(winMeta.overnight) : false,
+                timezone: 'Asia/Ho_Chi_Minh',
+                scheduledStartAt: winMeta ? winMeta.scheduledStartAt : null,
+                scheduledEndAt: winMeta ? winMeta.scheduledEndAt : null,
                 dwellPreset,
                 deviceProfile,
                 dedupIp: body.dedupIp !== false,
@@ -377,8 +451,17 @@
                 dupIps: 0
             };
             db.orders.unshift(order);
-            saveDemoDb(db);
-            return demoJsonRes(201, { success: true, ...buildDemoOrderPublic(order, null) });
+            let camp = null;
+            if (body.autoLaunch === true && isAdmin) {
+                camp = activateDemoOrder(order);
+            } else {
+                saveDemoDb(db);
+            }
+            return demoJsonRes(201, {
+                success: true,
+                autoLaunched: Boolean(camp),
+                ...buildDemoOrderPublic(order, camp)
+            });
         }
 
         const getOrderMatch = path.match(/^\/api\/orders\/([^/]+)$/);
@@ -403,34 +486,8 @@
             if (S.getEffectiveOrderStatus(ord) === 'expired') {
                 return demoJsonRes(400, { success: false, message: 'Đơn hàng đã hết hạn thanh toán (quá 30 phút).' });
             }
-            if (!ord.campaignId) {
-                const cid = String(db.nextCampSeq++);
-                const now = Date.now();
-                ord.paymentStatus = 'paid';
-                ord.status = 'running';
-                ord.paidAt = now;
-                ord.campaignId = cid;
-                db.campaigns.unshift({
-                    id: cid,
-                    name: ord.name,
-                    targetUrl: ord.targetUrl,
-                    status: 'running',
-                    dwellPreset: S.normalizeDwellPreset(ord.dwellPreset),
-                    deviceProfile: S.normalizeDeviceProfile(ord.deviceProfile),
-                    successVisits: 0,
-                    failedVisits: 0,
-                    totalVisits: 0,
-                    uniqueIps: 0,
-                    dupIps: 0,
-                    targetLimit: ord.targetClicks,
-                    startTime: now,
-                    actualStartTime: now,
-                    endTime: now + Math.round(ord.durationHours * 3600000)
-                });
-                saveDemoDb(db);
-                startDemoCampaignSimulation(ord.orderId);
-            }
-            return demoJsonRes(200, { success: true, orderId: ord.orderId, campaignId: ord.campaignId });
+            activateDemoOrder(ord);
+            return demoJsonRes(200, { success: true, orderId: ord.orderId, campaignId: ord.campaignId, orderStatus: ord.status });
         }
 
         if (path === '/api/admin/orders' && method === 'GET') {

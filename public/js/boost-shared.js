@@ -171,7 +171,7 @@
     function validateOrderPayload(params) {
         const errors = [];
         if (!params || typeof params !== 'object') {
-            return { valid: false, errors: ['Dữ liệu đơn hàng không hợp lệ.'] };
+            return { valid: false, errors: ['Dữ liệu chiến dịch không hợp lệ.'] };
         }
         const targetUrl = typeof params.targetUrl === 'string' ? params.targetUrl.trim() : '';
         let validUrl = false;
@@ -184,13 +184,30 @@
         const proxyKey = typeof params.proxyKey === 'string' ? params.proxyKey.trim() : '';
         if (!proxyKey) errors.push('Vui lòng nhập KiotProxy Key.');
 
-        const cost = calculateOrderCost(params.targetClicks, params.durationHours);
+        let effectiveDurationHours = params.durationHours;
+        let windowMeta = null;
+        if (params.scheduleType === 'window') {
+            windowMeta = computeVietnamScheduleWindow({
+                runDate: params.runDate,
+                startTime: params.startTime || params.startTimeText,
+                endTime: params.endTime || params.endTimeText,
+                allowPast: params.allowPast === true
+            });
+            if (!windowMeta.valid) {
+                errors.push(windowMeta.message || 'Khung giờ hẹn chạy không hợp lệ.');
+            } else {
+                effectiveDurationHours = windowMeta.durationHours;
+            }
+        }
+
+        const cost = calculateOrderCost(params.targetClicks, effectiveDurationHours);
         if (cost.error) errors.push(cost.error);
 
         return {
             valid: errors.length === 0,
             errors,
-            cost: cost.error ? null : cost
+            cost: cost.error ? null : cost,
+            windowMeta: windowMeta && windowMeta.valid ? windowMeta : null
         };
     }
 
@@ -228,21 +245,21 @@
         const effectiveStatus = getEffectiveOrderStatus(order);
         const dwell = formatDwellLabel(order.dwellPreset || p.dwellPreset);
         const device = formatDeviceLabel(order.deviceProfile || p.deviceProfile);
+        const schedSummary = formatScheduleWindowSummary(order);
         const lines = [
-            '=== BAO CAO DON HANG TRAFFIC BOOST ===',
+            '=== BAO CAO CHIEN DICH TRAFFIC BOOST ===',
             `Che do he thong: ${runtimeLabel}`,
             `Ma don (Order ID): ${order.orderId}`,
-            `Ma chuyen khoan (Order Code): ${order.orderCode}`,
+            `Ma tham chieu (Order Code): ${order.orderCode}`,
             `Ten chien dich: ${order.name || ''}`,
             `URL dich: ${order.targetUrl}`,
             `Proxy Key (da che): ${order.proxyKeyMasked || '--'}`,
+            `Lich chay: ${schedSummary}`,
             `Che do thuc thi: ${p.browserMode || order.browserMode || 'request'} (Axios + KiotProxy)`,
             `Phan bo thoi gian: ${order.scheduleMode || 'smart'} | dedupIp=${order.dedupIp !== false} | randomLinks=${order.randomLinks !== false}`,
             `Hanh vi luu trang: ${dwell} (${normalizeDwellPreset(order.dwellPreset || p.dwellPreset)}) | Thiet bi: ${device} (${normalizeDeviceProfile(order.deviceProfile || p.deviceProfile)})`,
-            `Trang thai thanh toan: ${order.paymentStatus}`,
             `Trang thai don / chien dich: ${effectiveStatus}`,
             `Campaign ID: ${p.campaignId || order.campaignId || 'Chua kich hoat'}`,
-            `So tien: ${Number(order.totalAmount || 0).toLocaleString('vi-VN')} VND`,
             `Muc tieu click: ${order.targetClicks}`,
             `Luot thanh cong: ${p.successVisits ?? order.successVisits ?? 0}`,
             `Luot that bai: ${p.failedVisits ?? order.failedVisits ?? 0}`,
@@ -250,9 +267,8 @@
             `IP duy nhat: ${p.uniqueIps ?? order.uniqueIps ?? 0}`,
             `IP trung bi bo qua: ${p.dupIps ?? order.dupIps ?? 0}`,
             `Thoi gian tao: ${fmtTime(order.createdAt)}`,
-            `Han thanh toan: ${fmtTime(order.expiresAt)}`,
-            `Thoi gian thanh toan: ${fmtTime(order.paidAt)}`,
-            `Ket thuc du kien/thuc te: ${fmtTime(p.actualEndTime || p.endTime || order.completedAt)}`
+            `Bat dau du kien: ${formatVnDateTime(order.scheduledStartAt || p.startTime)}`,
+            `Ket thuc du kien/thuc te: ${formatVnDateTime(p.actualEndTime || order.scheduledEndAt || p.endTime || order.completedAt)}`
         ];
         return lines.join('\n');
     }
@@ -437,7 +453,7 @@
                 btn._copyTimer = null;
             }, 1200);
         };
-        if (global.navigator && global.navigator.clipboard && global.navigator.clipboard.writeText) {
+        if (typeof global.navigator !== 'undefined' && global.navigator.clipboard && global.navigator.clipboard.writeText) {
             global.navigator.clipboard.writeText(text)
                 .then(() => flash('Đã chép'))
                 .catch(() => flash(fallbackExecCopy(text) ? 'Đã chép' : 'Lỗi chép'));
@@ -446,7 +462,171 @@
         }
     }
 
-    global.BoostShared = {
+    // ─── Vietnam Timezone (UTC+7 / Asia/Ho_Chi_Minh) Schedule Window Helpers ──
+    const VN_UTC_OFFSET_MS = 7 * 3600 * 1000;
+
+    function pad2(n) {
+        return String(Math.floor(Math.abs(Number(n) || 0))).padStart(2, '0');
+    }
+
+    function getVietnamDateISO(ms = Date.now()) {
+        const d = new Date(Number(ms) + VN_UTC_OFFSET_MS);
+        return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+    }
+
+    function getVietnamTimeHHMM(ms = Date.now()) {
+        const d = new Date(Number(ms) + VN_UTC_OFFSET_MS);
+        return `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
+    }
+
+    function addDaysToIsoDate(isoDate, deltaDays) {
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDate || '').trim());
+        if (!m) return '';
+        const y = Number(m[1]), mo = Number(m[2]), da = Number(m[3]);
+        const utc = new Date(Date.UTC(y, mo - 1, da + (Number(deltaDays) || 0)));
+        return `${utc.getUTCFullYear()}-${pad2(utc.getUTCMonth() + 1)}-${pad2(utc.getUTCDate())}`;
+    }
+
+    function formatVnDateDMY(isoDate) {
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDate || '').trim());
+        if (!m) return String(isoDate || '--');
+        return `${m[3]}/${m[2]}/${m[1]}`;
+    }
+
+    function formatVnDateTime(ms) {
+        const n = Number(ms);
+        if (!Number.isFinite(n) || n <= 0) return '--';
+        const d = new Date(n + VN_UTC_OFFSET_MS);
+        return `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())} ${pad2(d.getUTCDate())}/${pad2(d.getUTCMonth() + 1)}/${d.getUTCFullYear()}`;
+    }
+
+    function formatClock12h(hhmm) {
+        const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(hhmm || '').trim());
+        if (!m) return String(hhmm || '--');
+        const h24 = Number(m[1]);
+        const min = m[2];
+        const period = h24 >= 12 ? 'PM' : 'AM';
+        const h12 = h24 % 12 === 0 ? 12 : (h24 % 12);
+        return `${h12}:${min} ${period}`;
+    }
+
+    function getNextVietnamDefaultSlot(nowMs = Date.now()) {
+        const shifted = new Date(Number(nowMs) + VN_UTC_OFFSET_MS);
+        shifted.setUTCMinutes(0, 0, 0);
+        shifted.setUTCHours(shifted.getUTCHours() + 1);
+        const startMs = shifted.getTime() - VN_UTC_OFFSET_MS;
+        const endMs = startMs + 3600 * 1000;
+        return {
+            runDate: getVietnamDateISO(startMs),
+            startTime: getVietnamTimeHHMM(startMs),
+            endTime: getVietnamTimeHHMM(endMs)
+        };
+    }
+
+    function computeVietnamScheduleWindow(input = {}) {
+        const runDate = String(input.runDate || '').trim();
+        const startTime = String(input.startTime || input.startTimeText || '').trim();
+        const endTime = String(input.endTime || input.endTimeText || '').trim();
+        const nowMs = Number.isFinite(Number(input.nowMs)) ? Number(input.nowMs) : Date.now();
+        const allowPast = input.allowPast === true;
+
+        const dm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(runDate);
+        if (!dm) {
+            return { valid: false, code: 'INVALID_DATE', message: 'Ngày chạy không hợp lệ (định dạng YYYY-MM-DD).' };
+        }
+        const y = Number(dm[1]), mo = Number(dm[2]), da = Number(dm[3]);
+        const probe = new Date(Date.UTC(y, mo - 1, da));
+        if (probe.getUTCFullYear() !== y || (probe.getUTCMonth() + 1) !== mo || probe.getUTCDate() !== da) {
+            return { valid: false, code: 'INVALID_DATE', message: 'Ngày chạy không tồn tại trên lịch.' };
+        }
+
+        const sm = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(startTime);
+        const em = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(endTime);
+        if (!sm || !em) {
+            return { valid: false, code: 'INVALID_TIME', message: 'Giờ bắt đầu và giờ kết thúc phải đúng định dạng HH:MM.' };
+        }
+
+        const sh = Number(sm[1]), smin = Number(sm[2]);
+        const eh = Number(em[1]), emin = Number(em[2]);
+        const startMinutes = sh * 60 + smin;
+        const endMinutes = eh * 60 + emin;
+
+        if (startMinutes === endMinutes) {
+            return { valid: false, code: 'SAME_TIME', message: 'Giờ kết thúc phải khác giờ bắt đầu.' };
+        }
+
+        const overnight = endMinutes < startMinutes;
+        const durationMinutes = overnight ? (1440 - startMinutes + endMinutes) : (endMinutes - startMinutes);
+        const durationHours = Number((durationMinutes / 60).toFixed(4));
+        const scheduledStartAt = Date.UTC(y, mo - 1, da, sh, smin, 0, 0) - VN_UTC_OFFSET_MS;
+        const scheduledEndAt = scheduledStartAt + durationMinutes * 60 * 1000;
+        const endRunDate = getVietnamDateISO(scheduledEndAt);
+        const isPast = !allowPast && scheduledEndAt <= (nowMs - 60000);
+        const isInProgressWindow = scheduledStartAt <= nowMs && scheduledEndAt > nowMs;
+
+        return {
+            valid: !isPast,
+            isPast,
+            isInProgressWindow,
+            code: isPast ? 'WINDOW_IN_PAST' : 'OK',
+            message: isPast
+                ? `Khung giờ ${startTime} – ${endTime} ngày ${formatVnDateDMY(runDate)} đã qua theo giờ Việt Nam.`
+                : '',
+            runDate,
+            endRunDate,
+            startTime,
+            endTime,
+            overnight,
+            durationMinutes,
+            durationHours,
+            scheduledStartAt,
+            scheduledEndAt,
+            timezone: 'Asia/Ho_Chi_Minh'
+        };
+    }
+
+    function formatDurationCompactVi(durationHours, durationMinutes) {
+        const mins = Number.isFinite(Number(durationMinutes))
+            ? Math.round(Number(durationMinutes))
+            : Math.round((Number(durationHours) || 0) * 60);
+        if (mins <= 0) return '0p';
+        if (mins < 60) return `${mins} phút`;
+        const h = Math.floor(mins / 60);
+        const rem = mins % 60;
+        return rem > 0 ? `${h}g ${rem}p` : `${h} giờ`;
+    }
+
+    function formatScheduleWindowSummary(obj) {
+        if (!obj || obj.scheduleType !== 'window' || !obj.runDate || !obj.startTime || !obj.endTime) {
+            const h = Number(obj && obj.durationHours) || 1;
+            return `Chạy ngay · ${h} giờ`;
+        }
+        const dur = formatDurationCompactVi(obj.durationHours, obj.durationMinutes);
+        const start12 = formatClock12h(obj.startTime);
+        const end12 = formatClock12h(obj.endTime);
+        const startDmy = formatVnDateDMY(obj.runDate);
+        if (obj.overnight) {
+            const endDmy = formatVnDateDMY(obj.endRunDate || addDaysToIsoDate(obj.runDate, 1));
+            return `${startDmy} ${obj.startTime} (${start12}) → ${endDmy} ${obj.endTime} (${end12}) · Qua đêm +1 ngày · ${dur} (Giờ VN)`;
+        }
+        return `${startDmy} · ${obj.startTime} – ${obj.endTime} (${start12} – ${end12} · ${dur} · Giờ VN)`;
+    }
+
+    function formatCountdownVn(targetMs, nowMs = Date.now()) {
+        const diff = Math.max(0, Number(targetMs) - Number(nowMs));
+        if (diff <= 0) return 'Đang vào giờ chạy';
+        const totalSec = Math.floor(diff / 1000);
+        const days = Math.floor(totalSec / 86400);
+        const hours = Math.floor((totalSec % 86400) / 3600);
+        const mins = Math.floor((totalSec % 3600) / 60);
+        const secs = totalSec % 60;
+        if (days > 0) return `${days} ngày ${hours}g ${mins}p`;
+        if (hours > 0) return `${hours}g ${mins}p`;
+        if (mins > 0) return `${mins}p ${secs}s`;
+        return `${secs}s`;
+    }
+
+    const exported = {
         PRICING,
         ORDER_EXPIRE_MINUTES,
         ORDER_EXPIRE_MS,
@@ -457,6 +637,7 @@
         STORAGE_KEYS,
         DWELL_PRESETS,
         DEVICE_PROFILES,
+        VN_UTC_OFFSET_MS,
         $,
         esc,
         fmtVnd,
@@ -482,6 +663,22 @@
         setButtonTextSafe,
         setButtonLoading,
         buildTrackOrderUrl,
-        copyText
+        copyText,
+        getVietnamDateISO,
+        getVietnamTimeHHMM,
+        addDaysToIsoDate,
+        formatVnDateDMY,
+        formatVnDateTime,
+        formatClock12h,
+        getNextVietnamDefaultSlot,
+        computeVietnamScheduleWindow,
+        formatDurationCompactVi,
+        formatScheduleWindowSummary,
+        formatCountdownVn
     };
-})(window);
+
+    global.BoostShared = exported;
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = exported;
+    }
+})(typeof window !== 'undefined' ? window : globalThis);

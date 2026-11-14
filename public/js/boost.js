@@ -29,6 +29,7 @@
         activeOrderId: null,
         pollTimer: null,
         countdownTimer: null,
+        waitCountdownTimer: null,
         costDebounce: null,
         costRequestSeq: 0,
         socket: null,
@@ -43,7 +44,9 @@
     const orderUiHooks = {
         onStopPolling: stopOrderPolling,
         onStopQrCountdown: stopQrCountdown,
-        onStartQrCountdown: startQrCountdown
+        onStartQrCountdown: startQrCountdown,
+        onStartWaitCountdown: startWaitCountdown,
+        onStopWaitCountdown: stopWaitCountdown
     };
 
     const authUiHooks = {
@@ -379,11 +382,179 @@
         $('c-total').textContent = '0 VNĐ';
     }
 
+    function initDefaultScheduleWindow() {
+        const slot = S.getNextVietnamDefaultSlot();
+        if ($('f-run-date') && !$('f-run-date').value) $('f-run-date').value = slot.runDate;
+        if ($('f-start-time')) $('f-start-time').value = slot.startTime;
+        if ($('f-end-time')) $('f-end-time').value = slot.endTime;
+        setScheduleType('window', { skipRefresh: true });
+    }
+
+    function setScheduleType(nextType, opts = {}) {
+        const type = nextType === 'duration' ? 'duration' : 'window';
+        if ($('f-sched-type')) $('f-sched-type').value = type;
+        const winBtn = $('btn-sched-window');
+        const durBtn = $('btn-sched-duration');
+        if (winBtn) {
+            winBtn.classList.toggle('active', type === 'window');
+            winBtn.setAttribute('aria-selected', type === 'window' ? 'true' : 'false');
+        }
+        if (durBtn) {
+            durBtn.classList.toggle('active', type === 'duration');
+            durBtn.setAttribute('aria-selected', type === 'duration' ? 'true' : 'false');
+        }
+        if ($('sched-window-fields')) $('sched-window-fields').classList.toggle('hidden', type !== 'window');
+        if ($('sched-duration-fields')) $('sched-duration-fields').classList.toggle('hidden', type !== 'duration');
+        if (!opts.skipRefresh) {
+            updateCostAndDistribution();
+        }
+    }
+
+    function getWindowValidationFromUI() {
+        const schedType = ($('f-sched-type') && $('f-sched-type').value === 'duration') ? 'duration' : 'window';
+        if (schedType !== 'window') return { scheduleType: 'duration', win: null };
+        const runDate = ($('f-run-date') && $('f-run-date').value) || '';
+        const startTime = ($('f-start-time') && $('f-start-time').value) || '';
+        const endTime = ($('f-end-time') && $('f-end-time').value) || '';
+        const win = S.computeVietnamScheduleWindow({ runDate, startTime, endTime });
+        return { scheduleType: 'window', win };
+    }
+
+    function renderWindowCalcFeedback(win) {
+        const textEl = $('window-calc-text');
+        const boxEl = $('window-calc-box');
+        const badgeEl = $('window-overnight-badge');
+        const alertEl = $('window-alert-box');
+        if (!boxEl || !textEl) return;
+        if (!win) return;
+
+        if (win.code && ['INVALID_DATE', 'INVALID_TIME', 'SAME_TIME'].includes(win.code)) {
+            boxEl.classList.remove('overnight');
+            if (badgeEl) badgeEl.classList.add('hidden');
+            textEl.textContent = win.message || 'Vui lòng chọn ngày và giờ hợp lệ.';
+            if (alertEl) {
+                alertEl.classList.remove('hidden');
+                alertEl.innerHTML = `<div class="alert err" style="margin-bottom:0;">${S.esc(win.message)}</div>`;
+            }
+            return;
+        }
+
+        const durLabel = S.formatDurationCompactVi(win.durationHours, win.durationMinutes);
+        const start12 = S.formatClock12h(win.startTime);
+        const end12 = S.formatClock12h(win.endTime);
+        if (win.overnight) {
+            boxEl.classList.add('overnight');
+            if (badgeEl) badgeEl.classList.remove('hidden');
+            textEl.textContent = `${S.formatVnDateDMY(win.runDate)} ${win.startTime} (${start12}) → ${S.formatVnDateDMY(win.endRunDate)} ${win.endTime} (${end12}) · ${durLabel}`;
+        } else {
+            boxEl.classList.remove('overnight');
+            if (badgeEl) badgeEl.classList.add('hidden');
+            textEl.textContent = `${S.formatVnDateDMY(win.runDate)} · ${win.startTime} – ${win.endTime} (${start12} – ${end12} · ${durLabel})`;
+        }
+
+        if ($('f-hours') && win.durationHours > 0) {
+            $('f-hours').value = String(win.durationHours);
+        }
+
+        if (alertEl) {
+            if (win.isPast) {
+                const tomorrow = S.addDaysToIsoDate(S.getVietnamDateISO(), 1);
+                alertEl.classList.remove('hidden');
+                alertEl.innerHTML = `<div class="alert warn" style="margin-bottom:0;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;">
+                    <span>${S.esc(win.message)}</span>
+                    <button type="button" class="btn btn-sm" id="btn-shift-tomorrow" data-date="${S.esc(tomorrow)}"><span class="btn-label">Dời sang ngày mai (${S.esc(S.formatVnDateDMY(tomorrow))})</span></button>
+                </div>`;
+            } else if (win.isInProgressWindow) {
+                alertEl.classList.remove('hidden');
+                alertEl.innerHTML = `<div class="alert info" style="margin-bottom:0;">Khung giờ đang diễn ra — chiến dịch sẽ khởi chạy ngay và kết thúc lúc ${S.esc(win.endTime)} (${S.esc(S.formatVnDateDMY(win.endRunDate))}).</div>`;
+            } else {
+                alertEl.innerHTML = '';
+                alertEl.classList.add('hidden');
+            }
+        }
+    }
+
+    function refreshFormSummaries() {
+        const nameVal = ($('f-name') && $('f-name').value.trim()) || '';
+        const urlVal = ($('f-url') && $('f-url').value.trim()) || '';
+        const proxyVal = ($('f-proxy') && $('f-proxy').value.trim()) || '';
+
+        let shortHost = urlVal;
+        if (urlVal) {
+            try { shortHost = new URL(urlVal).host || urlVal; } catch (e) {}
+        }
+        const sumTargetEl = $('sum-target');
+        if (sumTargetEl) {
+            const parts = [];
+            parts.push(shortHost || 'Chưa nhập URL');
+            parts.push(proxyVal ? `Key ${S.maskProxyKey(proxyVal)}` : 'Chưa có Key');
+            sumTargetEl.textContent = parts.join(' · ');
+        }
+        const preTargetEl = $('pre-target');
+        if (preTargetEl) {
+            preTargetEl.textContent = urlVal ? `${nameVal ? nameVal + ' — ' : ''}${urlVal}` : (nameVal || 'Chưa nhập URL');
+        }
+
+        const clicksNum = Number(($('f-clicks') && $('f-clicks').value) || 0);
+        const clicksOk = Number.isInteger(clicksNum) && clicksNum >= 1;
+        const schedVal = ($('f-schedule') && $('f-schedule').value) || 'smart';
+        const schedModeLabel = schedVal === 'even' ? 'Even' : (schedVal === 'custom' ? 'Custom' : 'Smart');
+
+        const { scheduleType, win } = getWindowValidationFromUI();
+        let windowShortText = '--';
+        if (scheduleType === 'window' && win) {
+            if (win.runDate && win.startTime && win.endTime && win.code !== 'SAME_TIME' && win.code !== 'INVALID_TIME' && win.code !== 'INVALID_DATE') {
+                const dmy = S.formatVnDateDMY(win.runDate);
+                const dur = S.formatDurationCompactVi(win.durationHours, win.durationMinutes);
+                windowShortText = win.overnight
+                    ? `${dmy} ${win.startTime}→${win.endTime} (+1 ngày · ${dur})`
+                    : `${dmy} · ${win.startTime}–${win.endTime} (${dur})`;
+            } else {
+                windowShortText = win.message || 'Khung giờ chưa hợp lệ';
+            }
+        } else {
+            const hoursNum = Number(($('f-hours') && $('f-hours').value) || 0);
+            windowShortText = hoursNum > 0 ? `Chạy ngay · ${S.formatDurationCompactVi(hoursNum)}` : 'Chưa nhập giờ chạy';
+        }
+
+        const sumSchedEl = $('sum-schedule');
+        if (sumSchedEl) {
+            sumSchedEl.textContent = `${clicksOk ? clicksNum.toLocaleString('vi-VN') : 0} clicks · ${windowShortText} · ${schedModeLabel}`;
+        }
+        const preWinEl = $('pre-window');
+        if (preWinEl) {
+            if (scheduleType === 'window' && win && !win.code?.startsWith('INVALID_') && win.code !== 'SAME_TIME') {
+                preWinEl.textContent = S.formatScheduleWindowSummary({ ...win, scheduleType: 'window' });
+            } else {
+                preWinEl.textContent = windowShortText;
+            }
+        }
+        const preTrafficEl = $('pre-traffic');
+        if (preTrafficEl) {
+            preTrafficEl.textContent = `${clicksOk ? clicksNum.toLocaleString('vi-VN') : 0} clicks · Phân bổ ${schedModeLabel}`;
+        }
+
+        const dwellVal = S.normalizeDwellPreset($('f-dwell-preset') && $('f-dwell-preset').value);
+        const deviceVal = S.normalizeDeviceProfile($('f-device-profile') && $('f-device-profile').value);
+        const dedupOn = $('f-dedup') ? $('f-dedup').checked : true;
+        const linksOn = $('f-links') ? $('f-links').checked : true;
+        const behaviorText = `${S.formatDwellLabel(dwellVal)} · ${S.formatDeviceLabel(deviceVal)} · IP: ${dedupOn ? 'Bật' : 'Tắt'} · Link: ${linksOn ? 'Bật' : 'Tắt'}`;
+        if ($('sum-behavior')) $('sum-behavior').textContent = behaviorText;
+        if ($('pre-behavior')) $('pre-behavior').textContent = behaviorText;
+    }
+
     async function updateCostAndDistribution(opts = {}) {
+        const { scheduleType, win } = getWindowValidationFromUI();
+        if (scheduleType === 'window') {
+            renderWindowCalcFeedback(win);
+        }
+
         const rawClicks = $('f-clicks').value.trim();
         const rawHours = $('f-hours').value.trim();
         const targetClicks = Number(rawClicks);
-        const durationHours = Number(rawHours);
+        const durationHours = (scheduleType === 'window' && win && win.durationHours > 0)
+            ? win.durationHours
+            : Number(rawHours);
         const schedVal = $('f-schedule').value;
         const mode = ['even', 'custom'].includes(schedVal) ? schedVal : 'smart';
         const customBlocks = mode === 'custom' ? getCustomBlocksFromUI() : null;
@@ -396,9 +567,9 @@
         }
 
         const clicksOk = rawClicks !== '' && Number.isInteger(targetClicks) && targetClicks >= 1;
-        const hoursOk = rawHours !== '' && Number.isFinite(durationHours) && durationHours > 0;
+        const hoursOk = Number.isFinite(durationHours) && durationHours > 0;
 
-        $('c-clicks').textContent = clicksOk ? targetClicks.toLocaleString('vi-VN') : '0';
+        if ($('c-clicks')) $('c-clicks').textContent = clicksOk ? targetClicks.toLocaleString('vi-VN') : '0';
 
         if (!clicksOk || !hoursOk) {
             state.costRequestSeq++;
@@ -411,32 +582,23 @@
                 setCostHint('');
             }
             UI.renderDistributionPreview({ targetClicks: 0, durationHours: 0, mode, customBlocks }, state);
+            refreshFormSummaries();
             return;
         }
 
         setCostHint('');
-        const reqSeq = ++state.costRequestSeq;
-        try {
-            const { res, data } = await apiJson('/api/orders/calculate-cost', {
-                method: 'POST',
-                body: JSON.stringify({ targetClicks, durationHours })
-            });
-            if (reqSeq !== state.costRequestSeq) return;
-            if (res.ok && data.success) {
-                $('c-rate').textContent = Number(data.clickRate).toLocaleString('vi-VN');
-                $('c-hrate').textContent = Number(data.hourlyRate).toLocaleString('vi-VN');
-                $('c-hours').textContent = data.roundedHours;
-                $('c-click-fee').textContent = S.fmtVnd(data.clickFee);
-                $('c-hour-fee').textContent = S.fmtVnd(data.durationFee);
-                $('c-total').textContent = S.fmtVnd(data.totalAmount);
-            } else {
-                resetCostDisplay();
-                setCostHint((data && data.message) || 'Thông số tính giá chưa hợp lệ.');
-            }
-        } catch (e) {}
+        const calc = S.calculateOrderCost(targetClicks, durationHours, state.config.pricing);
+        if (!calc.error) {
+            if ($('c-rate')) $('c-rate').textContent = Number(calc.clickRate).toLocaleString('vi-VN');
+            if ($('c-hrate')) $('c-hrate').textContent = Number(calc.hourlyRate).toLocaleString('vi-VN');
+            if ($('c-hours')) $('c-hours').textContent = calc.roundedHours;
+            if ($('c-click-fee')) $('c-click-fee').textContent = S.fmtVnd(calc.clickFee);
+            if ($('c-hour-fee')) $('c-hour-fee').textContent = S.fmtVnd(calc.durationFee);
+            if ($('c-total')) $('c-total').textContent = S.fmtVnd(calc.totalAmount);
+        }
 
-        if (reqSeq !== state.costRequestSeq) return;
         UI.renderDistributionPreview({ targetClicks, durationHours, mode, customBlocks }, state);
+        refreshFormSummaries();
     }
 
     function scheduleCostRefresh(opts = {}) {
@@ -510,26 +672,43 @@
     async function handleOrderSubmit(e) {
         e.preventDefault();
         S.showAlert('order-form-msg', '');
+        const { scheduleType, win } = getWindowValidationFromUI();
+        if (scheduleType === 'window' && (!win || !win.valid)) {
+            if ($('acc-schedule')) $('acc-schedule').open = true;
+            renderWindowCalcFeedback(win);
+            S.showAlert('order-form-msg', (win && win.message) || 'Khung giờ chạy không hợp lệ.', 'err');
+            return;
+        }
+
         const schedVal = $('f-schedule').value;
         const scheduleMode = ['even', 'custom'].includes(schedVal) ? schedVal : 'smart';
         const dwellEl = $('f-dwell-preset');
         const deviceEl = $('f-device-profile');
+        const durationHours = (scheduleType === 'window' && win)
+            ? win.durationHours
+            : Number($('f-hours').value);
+
         const payload = {
             name: $('f-name').value.trim() || undefined,
             targetUrl: $('f-url').value.trim(),
             proxyKey: $('f-proxy').value.trim(),
             targetClicks: Number($('f-clicks').value),
-            durationHours: Number($('f-hours').value),
+            durationHours,
+            scheduleType,
+            runDate: scheduleType === 'window' && win ? win.runDate : undefined,
+            startTime: scheduleType === 'window' && win ? win.startTime : undefined,
+            endTime: scheduleType === 'window' && win ? win.endTime : undefined,
             scheduleMode,
             customBlocks: scheduleMode === 'custom' ? getCustomBlocksFromUI() : undefined,
             dwellPreset: S.normalizeDwellPreset(dwellEl && dwellEl.value),
             deviceProfile: S.normalizeDeviceProfile(deviceEl && deviceEl.value),
             dedupIp: $('f-dedup').checked,
-            randomLinks: $('f-links').checked
+            randomLinks: $('f-links').checked,
+            autoLaunch: true
         };
 
         const btn = $('submit-order-btn');
-        S.setButtonLoading(btn, true, 'Đang tạo đơn & sinh VietQR...');
+        S.setButtonLoading(btn, true, 'Đang tạo & lên lịch...');
 
         try {
             const { res, data } = await apiJson('/api/orders', {
@@ -537,14 +716,18 @@
                 body: JSON.stringify(payload)
             });
             if (!res.ok || !data.success) {
-                S.showAlert('order-form-msg', (data && data.message) || 'Không thể tạo đơn hàng.', 'err');
+                S.showAlert('order-form-msg', (data && data.message) || 'Không thể khởi tạo chiến dịch.', 'err');
                 return;
             }
-            S.showAlert('order-form-msg', `Đã tạo đơn ${data.orderId} (${data.orderCode}). Vui lòng thanh toán trong 30 phút để mở khóa thực thi.`, 'ok');
+            const effStatus = data.orderStatus || data.status || '';
+            const okMsg = effStatus === 'waiting'
+                ? `Đã lên lịch chiến dịch ${data.orderId} (${S.formatScheduleWindowSummary(data)}). Xem cấu hình đã chọn bên dưới.`
+                : `Đã tạo & khởi chạy chiến dịch ${data.orderId}. Xem chi tiết cấu hình bên dưới.`;
+            S.showAlert('order-form-msg', okMsg, 'ok');
             saveRecentOrder(data);
             await selectOrder(data.orderId);
         } catch (err) {
-            S.showAlert('order-form-msg', 'Lỗi kết nối máy chủ khi tạo đơn.', 'err');
+            S.showAlert('order-form-msg', 'Lỗi kết nối máy chủ khi tạo chiến dịch.', 'err');
         } finally {
             S.setButtonLoading(btn, false);
         }
@@ -562,6 +745,30 @@
             clearInterval(state.countdownTimer);
             state.countdownTimer = null;
         }
+    }
+
+    function stopWaitCountdown() {
+        if (state.waitCountdownTimer) {
+            clearInterval(state.waitCountdownTimer);
+            state.waitCountdownTimer = null;
+        }
+    }
+
+    function startWaitCountdown(startAtMs) {
+        stopWaitCountdown();
+        const el = $('ao-wait-countdown');
+        if (!el) return;
+        const target = Number(startAtMs) || 0;
+        const tick = () => {
+            const left = Math.max(0, target - Date.now());
+            el.textContent = S.formatCountdownVn(target);
+            if (left <= 0) {
+                stopWaitCountdown();
+                fetchActiveOrder();
+            }
+        };
+        tick();
+        state.waitCountdownTimer = setInterval(tick, 1000);
     }
 
     function startQrCountdown(expiresAt) {
@@ -592,6 +799,7 @@
     function clearActiveOrderView() {
         stopOrderPolling();
         stopQrCountdown();
+        stopWaitCountdown();
         state.activeOrderId = null;
         state.activeOrder = null;
         const wlog = $('ao-worker-log');
@@ -1227,7 +1435,46 @@
 
         $('validate-proxy-btn').addEventListener('click', handleValidateProxyKey);
 
-        document.querySelectorAll('.preset-btn').forEach(btn => {
+        if ($('btn-sched-window')) {
+            $('btn-sched-window').addEventListener('click', () => setScheduleType('window'));
+        }
+        if ($('btn-sched-duration')) {
+            $('btn-sched-duration').addEventListener('click', () => setScheduleType('duration'));
+        }
+
+        document.querySelectorAll('.window-preset-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const startT = btn.dataset.start;
+                const endT = btn.dataset.end;
+                if ($('f-start-time')) $('f-start-time').value = startT;
+                if ($('f-end-time')) $('f-end-time').value = endT;
+                // If selected preset on current date already ended in VN time, auto-advance to tomorrow VN date
+                const curDate = ($('f-run-date') && $('f-run-date').value) || S.getVietnamDateISO();
+                const testWin = S.computeVietnamScheduleWindow({ runDate: curDate, startTime: startT, endTime: endT });
+                if (testWin.isPast && $('f-run-date')) {
+                    $('f-run-date').value = S.addDaysToIsoDate(S.getVietnamDateISO(), 1);
+                }
+                setScheduleType('window');
+            });
+        });
+
+        if ($('window-alert-box')) {
+            $('window-alert-box').addEventListener('click', (e) => {
+                const shiftBtn = e.target.closest('#btn-shift-tomorrow');
+                if (!shiftBtn || !$('f-run-date')) return;
+                $('f-run-date').value = shiftBtn.dataset.date || S.addDaysToIsoDate(S.getVietnamDateISO(), 1);
+                updateCostAndDistribution();
+            });
+        }
+
+        ['f-run-date', 'f-start-time', 'f-end-time'].forEach(id => {
+            if ($(id)) {
+                $(id).addEventListener('input', () => updateCostAndDistribution());
+                $(id).addEventListener('change', () => updateCostAndDistribution());
+            }
+        });
+
+        document.querySelectorAll('.preset-btn[data-hours]').forEach(btn => {
             btn.addEventListener('click', () => {
                 $('f-hours').value = btn.dataset.hours;
                 updateCostAndDistribution({ expandPreview: true });
@@ -1239,6 +1486,12 @@
             $(id).addEventListener('change', () => updateCostAndDistribution({ expandPreview: true }));
         });
         $('f-schedule').addEventListener('change', () => updateCostAndDistribution({ expandPreview: true }));
+        ['f-name', 'f-url', 'f-proxy', 'f-dwell-preset', 'f-device-profile', 'f-dedup', 'f-links'].forEach(id => {
+            if ($(id)) {
+                $(id).addEventListener('input', refreshFormSummaries);
+                $(id).addEventListener('change', refreshFormSummaries);
+            }
+        });
         ['cb-night', 'cb-early', 'cb-morn', 'cb-noon', 'cb-after', 'cb-eve', 'cb-late'].forEach(id => {
             $(id).addEventListener('change', () => updateCostAndDistribution({ expandPreview: true }));
         });
@@ -1246,9 +1499,13 @@
             const btn = e.target.closest('button[data-action="toggle-preview-slices"]');
             if (!btn) return;
             state.expandPreviewSlices = !state.expandPreviewSlices;
+            const { scheduleType, win } = getWindowValidationFromUI();
             const targetClicks = Number($('f-clicks').value);
-            const durationHours = Number($('f-hours').value);
-            const mode = $('f-schedule').value;
+            const durationHours = (scheduleType === 'window' && win && win.durationHours > 0)
+                ? win.durationHours
+                : Number($('f-hours').value);
+            const schedVal = $('f-schedule').value;
+            const mode = ['even', 'custom'].includes(schedVal) ? schedVal : 'smart';
             UI.renderDistributionPreview({
                 targetClicks: Number.isInteger(targetClicks) ? targetClicks : 0,
                 durationHours: Number.isFinite(durationHours) ? durationHours : 0,
@@ -1373,6 +1630,8 @@
     // ─── Boot ─────────────────────────────────────────────────────────────────
     async function boot() {
         bindEvents();
+        initDefaultScheduleWindow();
+        refreshFormSummaries();
         UI.renderRecentOrders(getRecentOrders());
 
         const params = new URLSearchParams(window.location.search);
