@@ -3,75 +3,576 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Đặt dịch vụ Traffic</title>
+<title>Đặt dịch vụ Traffic - VietQR Checkout</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 <style>
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{--primary:#6366f1;--primary-d:#4f46e5;--accent:#22d3ee;--ok:#22c55e;--danger:#ef4444;--bg:#050811;--card:rgba(15,20,40,.88);--border:rgba(99,102,241,.25);--text:#e2e8f0;--muted:#8391a7;--r:16px}
-body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;justify-content:center;padding:32px 16px;
-background-image:radial-gradient(circle at 15% 10%,rgba(99,102,241,.18),transparent 45%),radial-gradient(circle at 85% 90%,rgba(34,211,238,.12),transparent 45%)}
-.wrap{width:100%;max-width:560px}
-.nav-top{display:flex;justify-content:flex-end;margin-bottom:10px}
-.nav-link{color:#94a3b8;font-size:13px;text-decoration:none;border:1px solid var(--border);padding:5px 12px;border-radius:99px;transition:.2s}
-.nav-link:hover{color:#fff;border-color:var(--accent)}
-h1{font-size:28px;font-weight:800;text-align:center;background:linear-gradient(90deg,#a5b4fc,#22d3ee);-webkit-background-clip:text;background-clip:text;color:transparent}
-.sub{text-align:center;color:var(--muted);margin:6px 0 24px;font-size:14px}
-.card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:28px;backdrop-filter:blur(18px);box-shadow:0 30px 60px rgba(0,0,0,.45);animation:up .5s cubic-bezier(.16,1,.3,1) both}
-@keyframes up{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:none}}
-label{display:block;font-size:13px;font-weight:600;margin:16px 0 6px;color:#cbd5e1}
-input{width:100%;padding:12px 14px;border-radius:10px;border:1px solid var(--border);background:rgba(5,8,17,.7);color:var(--text);font:inherit;outline:none;transition:border .2s,box-shadow .2s}
-input:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(99,102,241,.2)}
-.row{display:flex;gap:12px}.row>div{flex:1}
-.hint{font-size:12px;color:var(--muted);margin-top:4px}
-.price{margin-top:22px;padding:16px;border-radius:12px;background:rgba(99,102,241,.08);border:1px dashed var(--border)}
-.price div{display:flex;justify-content:space-between;font-size:14px;padding:3px 0;color:#cbd5e1}
-.price .total{border-top:1px solid var(--border);margin-top:8px;padding-top:10px;font-size:18px;font-weight:700;color:#fff}
-.price .total span:last-child{color:var(--accent)}
-button{width:100%;margin-top:20px;padding:14px;border:0;border-radius:12px;font:inherit;font-weight:700;font-size:16px;color:#fff;cursor:pointer;background:linear-gradient(135deg,var(--primary),var(--primary-d));transition:transform .15s,box-shadow .15s,opacity .2s;box-shadow:0 8px 24px rgba(99,102,241,.35)}
-button:hover{transform:translateY(-1px)}button:active{transform:scale(.98)}button:disabled{opacity:.5;cursor:not-allowed;transform:none}
-button.ghost{background:transparent;border:1px solid var(--border);box-shadow:none;margin-top:10px;font-size:14px;padding:10px}
-.err{color:var(--danger);font-size:13px;margin-top:12px;min-height:16px}
-.hidden{display:none}
-.qr{display:block;margin:12px auto;width:260px;max-width:100%;border-radius:12px;background:#fff;padding:8px}
-.kv{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid rgba(99,102,241,.12);font-size:14px}
-.kv b{font-family:'JetBrains Mono',monospace;font-weight:500;color:#fff;word-break:break-all;text-align:right}
-.cp{width:auto;margin:0;padding:4px 10px;font-size:12px;border-radius:8px;box-shadow:none;background:rgba(99,102,241,.25)}
-.badge{display:inline-block;padding:4px 12px;border-radius:99px;font-size:12px;font-weight:700}
-.b-wait{background:rgba(245,158,11,.15);color:#fbbf24}.b-ok{background:rgba(34,197,94,.15);color:#4ade80}
-.bar{height:12px;border-radius:99px;background:rgba(99,102,241,.15);overflow:hidden;margin:14px 0 6px}
-.bar>i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--primary),var(--accent));transition:width .6s}
-.center{text-align:center}
-.spin{width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;display:inline-block;animation:sp 1s linear infinite;vertical-align:-2px;margin-right:6px}
-@keyframes sp{to{transform:rotate(360deg)}}
-.timer{font-family:'JetBrains Mono',monospace;font-size:13px;color:#fbbf24;margin-top:6px}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #090d16;
+  --surface: #111827;
+  --surface-muted: #1e293b;
+  --border: rgba(148, 163, 184, 0.14);
+  --cta-from: #4f46e5;
+  --cta-to: #06b6d4;
+  --emerald: #10b981;
+  --emerald-bright: #34d399;
+  --warn: #f59e0b;
+  --danger: #ef4444;
+  --text: #f1f5f9;
+  --text-2: #94a3b8;
+  --muted: #64748b;
+  --r: 16px;
+}
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  padding: 0 16px 40px;
+  background-image:
+    radial-gradient(circle at 12% 0%, rgba(79, 70, 229, 0.14), transparent 42%),
+    radial-gradient(circle at 88% 100%, rgba(6, 182, 212, 0.10), transparent 42%);
+}
+.top-header {
+  max-width: 960px;
+  margin: 0 auto 22px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: var(--text);
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-weight: 700;
+  font-size: 16px;
+}
+.brand-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--cta-from), var(--cta-to));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 15px;
+}
+.nav-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.nav-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 13px;
+  border-radius: 9px;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: all 0.18s ease;
+}
+.nav-link:hover {
+  color: #fff;
+  border-color: rgba(148, 163, 184, 0.3);
+  transform: translateY(-1px);
+}
+.nav-link.active {
+  background: rgba(79, 70, 229, 0.18);
+  border-color: rgba(99, 102, 241, 0.45);
+  color: #c7d2fe;
+}
+.nav-link.boost-link {
+  color: #67e8f9;
+  border-color: rgba(6, 182, 212, 0.32);
+}
+
+.wrap { width: 100%; max-width: 600px; margin: 0 auto; }
+.hero-head { text-align: center; margin-bottom: 20px; }
+.hero-head h1 {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: #fff;
+}
+.sub { color: var(--text-2); margin-top: 6px; font-size: 13.5px; }
+
+/* Linear Step Flow Indicator */
+.stepper {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 18px;
+}
+.step-pill {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 9px 10px;
+  border-radius: 11px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+.step-num {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--surface-muted);
+  color: var(--text-2);
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+}
+.step-pill.active {
+  border-color: rgba(6, 182, 212, 0.45);
+  background: rgba(79, 70, 229, 0.14);
+  color: #f1f5f9;
+}
+.step-pill.active .step-num {
+  background: linear-gradient(135deg, var(--cta-from), var(--cta-to));
+  color: #fff;
+}
+.step-pill.done {
+  border-color: rgba(16, 185, 129, 0.35);
+  color: var(--emerald-bright);
+}
+.step-pill.done .step-num {
+  background: var(--emerald);
+  color: #052e16;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 26px;
+  box-shadow: 0 22px 50px rgba(0, 0, 0, 0.45);
+  animation: up 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes up { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+
+label.field-lbl {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  margin: 14px 0 6px;
+  color: var(--text-2);
+}
+label.field-lbl:first-child { margin-top: 0; }
+input[type="url"], input[type="text"], input[type="number"] {
+  width: 100%;
+  padding: 11px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+input:focus {
+  border-color: rgba(99, 102, 241, 0.65);
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.18);
+}
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.hint { font-size: 12px; color: var(--muted); margin-top: 6px; line-height: 1.5; }
+
+/* CSS Toggle Switches */
+.toggles-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 11px;
+  background: rgba(9, 13, 22, 0.6);
+  border: 1px solid var(--border);
+}
+.toggle-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.toggle-switch input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  width: 38px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+  flex-shrink: 0;
+  outline: none;
+}
+.toggle-switch input[type="checkbox"]::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #cbd5e1;
+  transition: transform 0.2s ease, background 0.2s ease;
+}
+.toggle-switch input[type="checkbox"]:checked {
+  background: linear-gradient(135deg, var(--cta-from), var(--cta-to));
+  border-color: transparent;
+}
+.toggle-switch input[type="checkbox"]:checked::after {
+  transform: translateX(16px);
+  background: #ffffff;
+}
+
+/* High-Contrast Emerald Price Summary */
+.price {
+  margin-top: 18px;
+  padding: 16px;
+  border-radius: 12px;
+  background: rgba(16, 185, 129, 0.06);
+  border: 1px solid rgba(16, 185, 129, 0.28);
+}
+.price .price-line {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13.5px;
+  padding: 4px 0;
+  color: var(--text-2);
+}
+.price .total {
+  border-top: 1px solid rgba(16, 185, 129, 0.22);
+  margin-top: 8px;
+  padding-top: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
+}
+.price .total span:last-child {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--emerald-bright);
+  text-shadow: 0 0 18px rgba(16, 185, 129, 0.25);
+}
+
+/* Collapsible secondary info */
+details.info-collapse {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(9, 13, 22, 0.55);
+  overflow: hidden;
+}
+details.info-collapse summary {
+  padding: 10px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-2);
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  user-select: none;
+}
+details.info-collapse summary::-webkit-details-marker { display: none; }
+details.info-collapse summary:hover { color: var(--text); }
+details.info-collapse[open] summary { border-bottom: 1px solid var(--border); color: var(--text); }
+details.info-collapse .collapse-body {
+  padding: 10px 14px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  line-height: 1.55;
+}
+
+/* Buttons with Hover, Active, and .is-loading states */
+.btn-primary, .btn-ghost {
+  width: 100%;
+  margin-top: 16px;
+  padding: 13px 16px;
+  border-radius: 11px;
+  font: inherit;
+  font-weight: 700;
+  font-size: 15px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  transition: transform 0.16s ease, box-shadow 0.2s ease, opacity 0.2s ease, background 0.2s ease;
+}
+.btn-primary {
+  border: 0;
+  color: #fff;
+  background: linear-gradient(135deg, var(--cta-from), var(--cta-to));
+  box-shadow: 0 8px 24px rgba(79, 70, 229, 0.28);
+}
+.btn-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 28px rgba(6, 182, 212, 0.26);
+}
+.btn-primary:active:not(:disabled) { transform: scale(0.985); }
+.btn-ghost {
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  color: var(--text);
+  margin-top: 10px;
+  font-size: 13.5px;
+  font-weight: 600;
+  padding: 11px 14px;
+}
+.btn-ghost:hover:not(:disabled) {
+  background: #273549;
+  border-color: rgba(148, 163, 184, 0.28);
+  transform: translateY(-1px);
+}
+.btn-ghost:active:not(:disabled) { transform: scale(0.985); }
+button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+button.is-loading { cursor: wait; opacity: 0.8; }
+button .btn-spinner {
+  display: none;
+  width: 15px;
+  height: 15px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: sp 0.8s linear infinite;
+}
+button.is-loading .btn-spinner { display: inline-block; }
+button.is-loading .btn-icon { display: none; }
+
+.err { color: #fca5a5; font-size: 13px; margin-top: 12px; min-height: 16px; }
+.hidden { display: none; }
+
+/* Payment Step 2 */
+.qr {
+  display: block;
+  margin: 14px auto;
+  width: 248px;
+  max-width: 100%;
+  border-radius: 12px;
+  background: #fff;
+  padding: 8px;
+}
+.kv {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13.5px;
+  color: var(--text-2);
+}
+.kv b {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 500;
+  color: #fff;
+  word-break: break-all;
+  text-align: right;
+}
+.cp {
+  width: auto;
+  margin: 0;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-muted);
+  color: var(--text);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+.cp:hover { border-color: rgba(6, 182, 212, 0.5); color: #67e8f9; }
+.cp:active { transform: scale(0.96); }
+
+/* Prominent Shareable Tracking Box */
+.track-share-box {
+  margin-top: 16px;
+  padding: 13px 14px;
+  border-radius: 12px;
+  background: rgba(6, 182, 212, 0.08);
+  border: 1px solid rgba(6, 182, 212, 0.3);
+}
+.track-share-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #67e8f9;
+}
+.track-share-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.track-share-url {
+  flex: 1;
+  min-width: 0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: #f1f5f9;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-decoration: none;
+}
+.track-share-url:hover { border-color: rgba(6, 182, 212, 0.55); }
+.btn-copy-link {
+  width: auto;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(6, 182, 212, 0.4);
+  background: rgba(6, 182, 212, 0.16);
+  color: #a5f3fc;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.18s ease;
+}
+.btn-copy-link:hover { background: rgba(6, 182, 212, 0.25); color: #fff; }
+.btn-copy-link:active { transform: scale(0.97); }
+
+.badge { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 99px; font-size: 12px; font-weight: 700; }
+.b-wait { background: rgba(245, 158, 11, 0.14); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
+.b-ok { background: rgba(16, 185, 129, 0.14); color: var(--emerald-bright); border: 1px solid rgba(16, 185, 129, 0.35); }
+.bar { height: 11px; border-radius: 99px; background: var(--bg); border: 1px solid var(--border); overflow: hidden; margin: 14px 0 6px; }
+.bar > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--cta-from), var(--emerald)); transition: width 0.5s ease; }
+.center { text-align: center; }
+.spin { width: 13px; height: 13px; border: 2px solid rgba(251, 191, 36, 0.3); border-top-color: #fbbf24; border-radius: 50%; display: inline-block; animation: sp 1s linear infinite; }
+@keyframes sp { to { transform: rotate(360deg); } }
+.timer { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #fbbf24; margin-top: 8px; }
+
+@media (max-width: 560px) {
+  .row { grid-template-columns: 1fr; }
+  .stepper { grid-template-columns: 1fr; }
+}
 </style>
 </head>
 <body>
+<header class="top-header">
+  <a href="/" class="brand">
+    <span class="brand-icon"><i class="fa-solid fa-bolt-lightning"></i></span>
+    <span>Traffic Control</span>
+  </a>
+  <nav class="nav-row" aria-label="Điều hướng">
+    <a class="nav-link" href="/"><i class="fa-solid fa-gauge-high"></i> Dashboard</a>
+    <a class="nav-link boost-link" href="/boost"><i class="fa-solid fa-rocket"></i> Boost</a>
+    <a class="nav-link active" href="/order.html"><i class="fa-solid fa-cart-plus"></i> Đặt đơn</a>
+    <a class="nav-link" href="/track.html"><i class="fa-solid fa-magnifying-glass"></i> Tra cứu</a>
+  </nav>
+</header>
+
 <div class="wrap">
-  <div class="nav-top"><a class="nav-link" href="/boost">Web Demo /boost</a> · <a class="nav-link" href="/track.html">Tra cứu đơn hàng</a></div>
-  <h1>Dịch vụ Click / Traffic</h1>
-  <p class="sub">40đ / click · 2.000đ / giờ hoàn thành · Chế độ Request siêu nhẹ</p>
+  <div class="hero-head">
+    <h1>Đặt dịch vụ Click / Traffic</h1>
+    <p class="sub">40đ / click · 2.000đ / giờ hoàn thành · Tự động kích hoạt ngay sau thanh toán</p>
+  </div>
+
+  <div class="stepper" aria-label="Tiến trình đặt đơn">
+    <div class="step-pill active" data-step-ind="step1"><span class="step-num">1</span><span>Cấu hình</span></div>
+    <div class="step-pill" data-step-ind="step2"><span class="step-num">2</span><span>VietQR</span></div>
+    <div class="step-pill" data-step-ind="step3"><span class="step-num">3</span><span>Theo dõi</span></div>
+  </div>
 
   <!-- Step 1: config -->
   <div class="card" id="step1">
-    <label for="url">Link website cần chạy</label>
+    <label class="field-lbl" for="url">Link website cần chạy</label>
     <input id="url" type="url" placeholder="https://example.com" autocomplete="off">
-    <label for="proxy">Key proxy KiotProxy</label>
+
+    <label class="field-lbl" for="proxy">Key proxy KiotProxy</label>
     <input id="proxy" type="text" placeholder="Dán key proxy của bạn" autocomplete="off">
+
     <div class="row">
-      <div><label for="clicks">Số click</label><input id="clicks" type="number" min="1" step="1" value="100"></div>
-      <div><label for="hours">Hoàn thành trong (giờ)</label><input id="hours" type="number" min="0.1" step="0.5" value="1"></div>
+      <div>
+        <label class="field-lbl" for="clicks">Số click</label>
+        <input id="clicks" type="number" min="1" step="1" value="100">
+      </div>
+      <div>
+        <label class="field-lbl" for="hours">Hoàn thành trong (giờ)</label>
+        <input id="hours" type="number" min="0.1" step="0.5" value="1">
+      </div>
     </div>
-    <p class="hint">Thời gian lẻ được làm tròn lên giờ nguyên khi tính phí (1,5 giờ = 2 giờ).</p>
+
+    <div class="toggles-row">
+      <label class="toggle-switch" for="opt-dedup-ip">
+        <input type="checkbox" id="opt-dedup-ip" checked>
+        <span>Chống trùng IP</span>
+      </label>
+      <label class="toggle-switch" for="opt-random-links">
+        <input type="checkbox" id="opt-random-links" checked>
+        <span>Click link nội bộ</span>
+      </label>
+    </div>
+
     <div class="price">
-      <div><span id="pClick">0 click × 40đ</span><span id="vClick">0đ</span></div>
-      <div><span id="pHour">0 giờ × 2.000đ</span><span id="vHour">0đ</span></div>
+      <div class="price-line"><span id="pClick">0 click × 40đ</span><span id="vClick">0đ</span></div>
+      <div class="price-line"><span id="pHour">0 giờ × 2.000đ</span><span id="vHour">0đ</span></div>
       <div class="total"><span>Tổng thanh toán</span><span id="vTotal">0đ</span></div>
     </div>
+
+    <details class="info-collapse">
+      <summary><span><i class="fa-solid fa-circle-info"></i> Quy tắc làm tròn &amp; chế độ chạy</span><i class="fa-solid fa-chevron-down"></i></summary>
+      <div class="collapse-body">
+        Thời gian lẻ được làm tròn lên giờ nguyên khi tính phí (ví dụ 1,5 giờ tính 2 giờ). Đơn chạy ở chế độ Request siêu nhẹ và chỉ kích hoạt click khi đã xác nhận thanh toán.
+      </div>
+    </details>
+
     <div class="err" id="err1"></div>
-    <button id="btnOrder">Tiếp tục thanh toán</button>
+    <button id="btnOrder" type="button" class="btn-primary">
+      <span class="btn-spinner" aria-hidden="true"></span>
+      <i class="fa-solid fa-qrcode btn-icon"></i>
+      <span class="btn-label">Tiếp tục thanh toán</span>
+    </button>
   </div>
 
   <!-- Step 2: payment -->
@@ -82,27 +583,70 @@ button.ghost{background:transparent;border:1px solid var(--border);box-shadow:no
     </div>
     <img class="qr" id="qr" alt="Mã VietQR">
     <div class="kv"><span>Ngân hàng</span><b id="bBank"></b></div>
-    <div class="kv"><span>Số tài khoản</span><b id="bAcc"></b><button class="cp" data-cp="bAcc">Chép</button></div>
+    <div class="kv"><span>Số tài khoản</span><b id="bAcc"></b><button type="button" class="cp" data-cp="bAcc">Chép</button></div>
     <div class="kv"><span>Chủ tài khoản</span><b id="bName"></b></div>
-    <div class="kv"><span>Số tiền</span><b id="bAmount"></b><button class="cp" data-cp="bAmountRaw">Chép</button></div>
-    <div class="kv"><span>Nội dung CK</span><b id="bCode"></b><button class="cp" data-cp="bCode">Chép</button></div>
-    <p class="hint center" style="margin-top:14px">Chuyển <b>đúng số tiền</b> và <b>đúng nội dung</b>. Hệ thống tự động nhận diện và bắt đầu chạy ngay khi tiền về.</p>
-    <p class="hint center">Mã đơn của bạn: <span id="oid" style="font-family:'JetBrains Mono',monospace"></span> (<a id="trackLink" href="/track.html" style="color:var(--accent)">mở trang theo dõi</a>)</p>
-    <button class="ghost" id="btnCheckNow">Kiểm tra thanh toán ngay</button>
-    <button class="ghost" id="btnNewUnpaid">Tạo đơn mới</button>
+    <div class="kv"><span>Số tiền</span><b id="bAmount" style="color:var(--emerald-bright)"></b><button type="button" class="cp" data-cp="bAmountRaw">Chép</button></div>
+    <div class="kv"><span>Nội dung CK</span><b id="bCode"></b><button type="button" class="cp" data-cp="bCode">Chép</button></div>
+
+    <div class="track-share-box">
+      <div class="track-share-head">
+        <span><i class="fa-solid fa-link"></i> Link theo dõi đơn (<span id="oid" style="font-family:'JetBrains Mono',monospace"></span>)</span>
+      </div>
+      <div class="track-share-row">
+        <a id="trackLink" class="track-share-url" href="/track.html">/track.html</a>
+        <button type="button" class="btn-copy-link" id="btnCopyTrack2"><i class="fa-regular fa-copy"></i> <span>Sao chép</span></button>
+      </div>
+    </div>
+
+    <details class="info-collapse" open>
+      <summary><span><i class="fa-solid fa-shield-check"></i> Lưu ý thanh toán VietQR</span><i class="fa-solid fa-chevron-down"></i></summary>
+      <div class="collapse-body">
+        Chuyển <b>đúng số tiền</b> và <b>đúng nội dung</b>. Hệ thống tự động nhận diện giao dịch và chạy chiến dịch ngay khi tiền về.
+      </div>
+    </details>
+
+    <button class="btn-ghost" type="button" id="btnCheckNow">
+      <span class="btn-spinner" aria-hidden="true"></span>
+      <i class="fa-solid fa-rotate btn-icon"></i>
+      <span class="btn-label">Kiểm tra thanh toán ngay</span>
+    </button>
+    <button class="btn-ghost" type="button" id="btnNewUnpaid">
+      <i class="fa-solid fa-plus"></i>
+      <span>Tạo đơn mới</span>
+    </button>
   </div>
 
   <!-- Step 3: progress -->
   <div class="card hidden" id="step3">
     <div class="center"><span class="badge b-ok" id="runBadge">Đã thanh toán · Đang chạy</span></div>
-    <h2 class="center" style="margin-top:16px;font-size:36px" id="pct">0%</h2>
+    <h2 class="center" style="margin-top:16px;font-size:38px;font-family:'JetBrains Mono',monospace;color:var(--emerald-bright)" id="pct">0%</h2>
     <div class="bar"><i id="barFill"></i></div>
-    <p class="center hint" id="progTxt"></p>
+    <p class="center hint" id="progTxt" style="margin-bottom:14px"></p>
+
+    <div class="track-share-box" style="margin-bottom:14px">
+      <div class="track-share-head">
+        <span><i class="fa-solid fa-share-nodes"></i> Link theo dõi công khai (có thể chia sẻ)</span>
+      </div>
+      <div class="track-share-row">
+        <a id="trackLink3" class="track-share-url" href="/track.html">/track.html</a>
+        <button type="button" class="btn-copy-link" id="btnCopyTrack3"><i class="fa-regular fa-copy"></i> <span>Sao chép</span></button>
+      </div>
+    </div>
+
     <div class="kv"><span>Mã đơn</span><b id="pCode"></b></div>
     <div class="kv"><span>Link</span><b id="pUrl"></b></div>
-    <div class="kv"><span>Proxy</span><b id="pProxy"></b></div>
-    <div class="kv"><span>Kết thúc dự kiến</span><b id="pEnd"></b></div>
-    <button class="ghost" id="btnNew">Tạo đơn mới</button>
+    <details class="info-collapse">
+      <summary><span><i class="fa-solid fa-sliders"></i> Thông số proxy &amp; thời gian dự kiến</span><i class="fa-solid fa-chevron-down"></i></summary>
+      <div class="collapse-body" style="padding:4px 14px">
+        <div class="kv"><span>Proxy</span><b id="pProxy"></b></div>
+        <div class="kv" style="border-bottom:0"><span>Kết thúc dự kiến</span><b id="pEnd"></b></div>
+      </div>
+    </details>
+
+    <button class="btn-ghost" type="button" id="btnNew">
+      <i class="fa-solid fa-plus"></i>
+      <span>Tạo đơn mới</span>
+    </button>
   </div>
 </div>
 
@@ -111,8 +655,18 @@ button.ghost{background:transparent;border:1px solid var(--border);box-shadow:no
 const $ = id => document.getElementById(id);
 const CLICK = 40, HOUR = 2000;
 const fmt = n => n.toLocaleString('vi-VN') + 'đ';
-let orderId = new URLSearchParams(location.search).get('order') || localStorage.getItem('trafficOrderId');
+const urlParams = new URLSearchParams(location.search);
+let orderId = urlParams.get('orderId') || urlParams.get('order') || localStorage.getItem('trafficOrderId');
 let timer = null, cdTimer = null, lastOrder = null;
+
+function setBtnLoading(btn, isLoading, loadingLabel) {
+  if (!btn) return;
+  const labelEl = btn.querySelector('.btn-label');
+  if (!btn.dataset.defaultLabel && labelEl) btn.dataset.defaultLabel = labelEl.textContent;
+  btn.disabled = Boolean(isLoading);
+  btn.classList.toggle('is-loading', Boolean(isLoading));
+  if (labelEl) labelEl.textContent = isLoading ? (loadingLabel || 'Đang xử lý...') : (btn.dataset.defaultLabel || labelEl.textContent);
+}
 
 const socket = typeof io === 'function' ? io() : null;
 if (socket) {
@@ -141,7 +695,16 @@ function calc() {
 ['clicks', 'hours'].forEach(i => $(i).addEventListener('input', calc));
 calc();
 
-function show(step) { ['step1', 'step2', 'step3'].forEach(s => $(s).classList.toggle('hidden', s !== step)); }
+function show(step) {
+  ['step1', 'step2', 'step3'].forEach(s => $(s).classList.toggle('hidden', s !== step));
+  const order = ['step1', 'step2', 'step3'];
+  const idx = order.indexOf(step);
+  document.querySelectorAll('.step-pill').forEach(el => {
+    const sIdx = order.indexOf(el.dataset.stepInd);
+    el.classList.toggle('active', sIdx === idx);
+    el.classList.toggle('done', sIdx < idx);
+  });
+}
 
 function updateCountdown(createdAt, expiresAt) {
   if (cdTimer) clearInterval(cdTimer);
@@ -164,23 +727,41 @@ function updateCountdown(createdAt, expiresAt) {
 $('btnOrder').onclick = async () => {
   $('err1').textContent = '';
   if (!calc()) { $('err1').textContent = 'Số click và thời gian phải lớn hơn 0.'; return; }
-  $('btnOrder').disabled = true;
+  setBtnLoading($('btnOrder'), true, 'Đang tạo đơn VietQR...');
   try {
-    const r = await fetch('/api/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-      targetUrl: $('url').value.trim(), proxyKey: $('proxy').value.trim(),
-      targetClicks: Number($('clicks').value), durationHours: Number($('hours').value) }) });
+    const r = await fetch('/api/orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        targetUrl: $('url').value.trim(),
+        proxyKey: $('proxy').value.trim(),
+        targetClicks: Number($('clicks').value),
+        durationHours: Number($('hours').value),
+        dedupIp: $('opt-dedup-ip').checked,
+        randomLinks: $('opt-random-links').checked
+      })
+    });
     const d = await r.json();
     if (!r.ok || !d.success) throw new Error((d.message || 'Không tạo được đơn').replace('Validation failed: ', ''));
-    orderId = d.orderId; localStorage.setItem('trafficOrderId', orderId);
-    history.replaceState(null, '', '?order=' + encodeURIComponent(orderId));
+    orderId = d.orderId;
+    localStorage.setItem('trafficOrderId', orderId);
+    history.replaceState(null, '', '?orderId=' + encodeURIComponent(orderId));
     if (socket) socket.emit('subscribe-order', orderId);
     startPolling();
   } catch (e) { $('err1').textContent = e.message; }
-  $('btnOrder').disabled = false;
+  setBtnLoading($('btnOrder'), false);
 };
+
+function syncShareTracking(id) {
+  const rel = '/track.html?orderId=' + encodeURIComponent(id);
+  const full = location.origin + rel;
+  if ($('trackLink')) { $('trackLink').href = rel; $('trackLink').textContent = full; }
+  if ($('trackLink3')) { $('trackLink3').href = rel; $('trackLink3').textContent = full; }
+}
 
 function render(o) {
   lastOrder = o;
+  syncShareTracking(o.orderId);
   const p = o.progress || { successVisits: 0, targetLimit: o.targetClicks };
   const st = p.status || o.effectiveStatus || o.status || 'pending_payment';
   const isExpired = st === 'expired' || (o.paymentStatus !== 'paid' && o.expiresAt && Date.now() >= Number(o.expiresAt));
@@ -194,7 +775,6 @@ function render(o) {
     $('bAmount').dataset.raw = o.totalAmount;
     $('bCode').textContent = o.orderCode;
     $('oid').textContent = o.orderId;
-    $('trackLink').href = '/track.html?order=' + encodeURIComponent(o.orderId);
     updateCountdown(o.createdAt, o.expiresAt);
     return;
   }
@@ -230,11 +810,35 @@ function startPolling() { stopPolling(); poll(); timer = setInterval(poll, 3000)
 function stopPolling() { if (timer) clearInterval(timer); timer = null; }
 
 document.addEventListener('click', e => {
-  const id = e.target.dataset && e.target.dataset.cp; if (!id) return;
-  const el = $(id === 'bAmountRaw' ? 'bAmount' : id);
-  const txt = id === 'bAmountRaw' ? el.dataset.raw : el.textContent;
-  navigator.clipboard.writeText(txt).then(() => { const o = e.target.textContent; e.target.textContent = 'Đã chép'; setTimeout(() => e.target.textContent = o, 1200); });
+  const cpBtn = e.target.closest('[data-cp]');
+  if (cpBtn) {
+    const id = cpBtn.dataset.cp;
+    const el = $(id === 'bAmountRaw' ? 'bAmount' : id);
+    const txt = id === 'bAmountRaw' ? el.dataset.raw : el.textContent;
+    navigator.clipboard.writeText(txt).then(() => {
+      const orig = cpBtn.textContent;
+      cpBtn.textContent = 'Đã chép';
+      setTimeout(() => { cpBtn.textContent = orig; }, 1200);
+    });
+  }
 });
+
+function wireCopyTracking(btnId, linkId) {
+  const btn = $(btnId);
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    const href = $(linkId) ? $(linkId).href : '';
+    if (!href) return;
+    navigator.clipboard.writeText(href).then(() => {
+      const span = btn.querySelector('span');
+      const orig = span ? span.textContent : 'Sao chép';
+      if (span) span.textContent = 'Đã chép!';
+      setTimeout(() => { if (span) span.textContent = orig; }, 1400);
+    });
+  });
+}
+wireCopyTracking('btnCopyTrack2', 'trackLink');
+wireCopyTracking('btnCopyTrack3', 'trackLink3');
 
 function resetNew() {
   stopPolling();
@@ -244,7 +848,10 @@ function resetNew() {
   history.replaceState(null, '', location.pathname);
   show('step1');
 }
-$('btnCheckNow').onclick = poll;
+$('btnCheckNow').onclick = async () => {
+  setBtnLoading($('btnCheckNow'), true, 'Đang kiểm tra...');
+  try { await poll(); } finally { setBtnLoading($('btnCheckNow'), false); }
+};
 $('btnNewUnpaid').onclick = resetNew;
 $('btnNew').onclick = resetNew;
 

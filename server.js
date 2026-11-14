@@ -1278,6 +1278,10 @@ async function scheduleTick(campaignId) {
 }
 
 // ─── Auth middleware ───────────────────────────────────────────────────────────
+function isAuthRequired() {
+    return process.env.REQUIRE_AUTH === 'true';
+}
+
 initAdminAccount();
 
 function getUserRole(username) {
@@ -1320,10 +1324,17 @@ app.use((req, res, next) => {
         cookieHeader: req.headers.cookie,
         authorizationHeader: req.headers.authorization
     });
-    req.sessionToken = resolved.sessionToken;
-    req.username = resolved.username;
-    req.userRole = resolved.role;
-    req.isAuthenticated = !!req.username;
+    if (!resolved.username && !isAuthRequired()) {
+        req.sessionToken = null;
+        req.username = 'admin';
+        req.userRole = 'admin';
+        req.isAuthenticated = true;
+    } else {
+        req.sessionToken = resolved.sessionToken;
+        req.username = resolved.username;
+        req.userRole = resolved.role;
+        req.isAuthenticated = !!req.username;
+    }
     next();
 });
 
@@ -1371,6 +1382,9 @@ if (require.main !== module) {
 }
 
 function requireAuth(req, res, next) {
+    if (req.path === '/login.html' && !isAuthRequired()) {
+        return res.redirect('/');
+    }
     const isPublicPath = req.path === '/login.html' || req.path.startsWith('/css/') ||
         req.path === '/js/login.js' || req.path.startsWith('/api/login') ||
         req.path.startsWith('/socket.io/') || req.path === '/favicon.ico' ||
@@ -1630,19 +1644,23 @@ app.post('/api/admin/telegram/test', requireAdmin, async (req, res) => {
 });
 
 app.get('/boost', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'boost.html'));
+    res.sendFile('boost.html', { root: path.join(__dirname, 'public') });
 });
 
 app.get('/api/public-config', (req, res) => {
+    const authRequired = isAuthRequired();
     res.json({
         success: true,
-        authenticated: Boolean(req.isAuthenticated),
-        role: req.userRole || null,
-        username: req.username || null,
+        authRequired,
+        authenticated: authRequired ? Boolean(req.isAuthenticated) : true,
+        role: authRequired ? (req.userRole || null) : 'admin',
+        username: authRequired ? (req.username || null) : 'admin',
         singleAccountMode: true,
         guestEnabled: false,
         orderExpireMinutes: Math.round(orderService.ORDER_TTL_MS / 60000),
-        defaultPasswordWarning: Boolean(req.isAuthenticated && req.userRole === 'admin' && isDefaultAdminPassword()),
+        defaultPasswordWarning: authRequired
+            ? Boolean(req.isAuthenticated && req.userRole === 'admin' && isDefaultAdminPassword())
+            : false,
         browserMode: 'request',
         pricing: {
             clickRate: orderService.CONSTANTS.CLICK_RATE,
@@ -1929,8 +1947,8 @@ io.on('connection', (socket) => {
         authorizationHeader: socket.handshake.headers.authorization,
         authToken: socket.handshake.auth && socket.handshake.auth.token
     });
-    const socketUsername = resolvedSocketAuth.username;
-    const socketRole = resolvedSocketAuth.role;
+    const socketUsername = resolvedSocketAuth.username || (!isAuthRequired() ? 'admin' : null);
+    const socketRole = resolvedSocketAuth.role || (!isAuthRequired() ? 'admin' : null);
 
     console.log(`Socket connected: ${socket.id} (${socketUsername || 'anon'} [${socketRole}])`);
 

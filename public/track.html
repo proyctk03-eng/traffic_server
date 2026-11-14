@@ -6,45 +6,264 @@
 <title>Tra cứu đơn hàng Traffic</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 <style>
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{--primary:#6366f1;--primary-d:#4f46e5;--accent:#22d3ee;--ok:#22c55e;--danger:#ef4444;--bg:#050811;--card:rgba(15,20,40,.88);--border:rgba(99,102,241,.25);--text:#e2e8f0;--muted:#8391a7;--r:16px}
-body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;justify-content:center;padding:32px 16px;
-background-image:radial-gradient(circle at 15% 10%,rgba(99,102,241,.18),transparent 45%),radial-gradient(circle at 85% 90%,rgba(34,211,238,.12),transparent 45%)}
-.wrap{width:100%;max-width:580px}
-.nav-top{display:flex;justify-content:flex-end;margin-bottom:10px}
-.nav-link{color:#94a3b8;font-size:13px;text-decoration:none;border:1px solid var(--border);padding:5px 12px;border-radius:99px;transition:.2s}
-.nav-link:hover{color:#fff;border-color:var(--accent)}
-h1{font-size:28px;font-weight:800;text-align:center;background:linear-gradient(90deg,#a5b4fc,#22d3ee);-webkit-background-clip:text;background-clip:text;color:transparent}
-.sub{text-align:center;color:var(--muted);margin:6px 0 22px;font-size:14px}
-.card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:24px;backdrop-filter:blur(18px);box-shadow:0 30px 60px rgba(0,0,0,.45);margin-bottom:18px}
-.search-row{display:flex;gap:10px}
-input{flex:1;padding:12px 14px;border-radius:10px;border:1px solid var(--border);background:rgba(5,8,17,.7);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:13px;outline:none}
-input:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(99,102,241,.2)}
-button{padding:12px 18px;border:0;border-radius:10px;font:inherit;font-weight:700;color:#fff;cursor:pointer;background:linear-gradient(135deg,var(--primary),var(--primary-d))}
-button.ghost{background:transparent;border:1px solid var(--border);width:100%;margin-top:14px}
-.err{color:var(--danger);font-size:13px;margin-top:10px}
-.hidden{display:none}
-.badge{display:inline-block;padding:4px 12px;border-radius:99px;font-size:12px;font-weight:700}
-.b-wait{background:rgba(245,158,11,.15);color:#fbbf24}.b-ok{background:rgba(34,197,94,.15);color:#4ade80}.b-done{background:rgba(99,102,241,.2);color:#a5b4fc}
-.bar{height:12px;border-radius:99px;background:rgba(99,102,241,.15);overflow:hidden;margin:14px 0 6px}
-.bar>i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--primary),var(--accent));transition:width .5s}
-.kv{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid rgba(99,102,241,.12);font-size:14px}
-.kv b{font-family:'JetBrains Mono',monospace;font-weight:500;color:#fff;word-break:break-all;text-align:right}
-.center{text-align:center}.hint{font-size:12px;color:var(--muted)}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #090d16;
+  --surface: #111827;
+  --surface-muted: #1e293b;
+  --border: rgba(148, 163, 184, 0.14);
+  --cta-from: #4f46e5;
+  --cta-to: #06b6d4;
+  --emerald: #10b981;
+  --emerald-bright: #34d399;
+  --danger: #ef4444;
+  --text: #f1f5f9;
+  --text-2: #94a3b8;
+  --muted: #64748b;
+  --r: 16px;
+}
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  padding: 0 16px 40px;
+  background-image:
+    radial-gradient(circle at 12% 0%, rgba(79, 70, 229, 0.14), transparent 42%),
+    radial-gradient(circle at 88% 100%, rgba(6, 182, 212, 0.10), transparent 42%);
+}
+.top-header {
+  max-width: 960px;
+  margin: 0 auto 22px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: var(--text);
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-weight: 700;
+  font-size: 16px;
+}
+.brand-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--cta-from), var(--cta-to));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 15px;
+}
+.nav-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.nav-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 13px;
+  border-radius: 9px;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: all 0.18s ease;
+}
+.nav-link:hover { color: #fff; border-color: rgba(148, 163, 184, 0.3); transform: translateY(-1px); }
+.nav-link.active { background: rgba(79, 70, 229, 0.18); border-color: rgba(99, 102, 241, 0.45); color: #c7d2fe; }
+.nav-link.boost-link { color: #67e8f9; border-color: rgba(6, 182, 212, 0.32); }
+
+.wrap { width: 100%; max-width: 600px; margin: 0 auto; }
+.hero-head { text-align: center; margin-bottom: 20px; }
+h1 {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: #fff;
+}
+.sub { color: var(--text-2); margin-top: 6px; font-size: 13.5px; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 24px;
+  box-shadow: 0 22px 50px rgba(0, 0, 0, 0.45);
+  margin-bottom: 18px;
+}
+.search-row { display: flex; gap: 10px; }
+input {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+input:focus { border-color: rgba(99, 102, 241, 0.65); box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.18); }
+
+.btn-primary {
+  padding: 12px 18px;
+  border: 0;
+  border-radius: 10px;
+  font: inherit;
+  font-weight: 700;
+  font-size: 14px;
+  color: #fff;
+  cursor: pointer;
+  background: linear-gradient(135deg, var(--cta-from), var(--cta-to));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-shadow: 0 6px 18px rgba(79, 70, 229, 0.26);
+  transition: transform 0.16s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+  white-space: nowrap;
+}
+.btn-primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 10px 24px rgba(6, 182, 212, 0.24); }
+.btn-primary:active:not(:disabled) { transform: scale(0.98); }
+.btn-primary:disabled, .btn-primary.is-loading { opacity: 0.75; cursor: wait; }
+.btn-primary .btn-spinner {
+  display: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: sp 0.8s linear infinite;
+}
+.btn-primary.is-loading .btn-spinner { display: inline-block; }
+.btn-primary.is-loading .btn-icon { display: none; }
+@keyframes sp { to { transform: rotate(360deg); } }
+
+.err { color: #fca5a5; font-size: 13px; margin-top: 12px; }
+.hidden { display: none; }
+.badge { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 99px; font-size: 12px; font-weight: 700; }
+.b-wait { background: rgba(245, 158, 11, 0.14); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
+.b-ok { background: rgba(16, 185, 129, 0.14); color: var(--emerald-bright); border: 1px solid rgba(16, 185, 129, 0.35); }
+.b-done { background: rgba(99, 102, 241, 0.18); color: #c7d2fe; border: 1px solid rgba(99, 102, 241, 0.32); }
+
+.bar { height: 11px; border-radius: 99px; background: var(--bg); border: 1px solid var(--border); overflow: hidden; margin: 14px 0 6px; }
+.bar > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--cta-from), var(--emerald)); transition: width 0.5s ease; }
+
+.track-share-box {
+  margin: 14px 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(6, 182, 212, 0.08);
+  border: 1px solid rgba(6, 182, 212, 0.28);
+}
+.track-share-head { font-size: 12px; font-weight: 600; color: #67e8f9; margin-bottom: 7px; display: flex; align-items: center; gap: 6px; }
+.track-share-row { display: flex; align-items: center; gap: 8px; }
+.track-share-url {
+  flex: 1; min-width: 0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px; color: #f1f5f9;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 10px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.btn-copy-link {
+  padding: 8px 12px; border-radius: 8px;
+  border: 1px solid rgba(6, 182, 212, 0.4);
+  background: var(--surface-muted); color: #a5f3fc;
+  font-size: 12px; font-weight: 700; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  transition: all 0.16s ease;
+}
+.btn-copy-link:hover { background: rgba(6, 182, 212, 0.2); color: #fff; }
+.btn-copy-link:active { transform: scale(0.97); }
+
+.kv {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13.5px;
+  color: var(--text-2);
+}
+.kv b { font-family: 'JetBrains Mono', monospace; font-weight: 500; color: #fff; word-break: break-all; text-align: right; }
+.kv b.emerald { color: var(--emerald-bright); font-weight: 700; }
+
+details.info-collapse {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(9, 13, 22, 0.55);
+  overflow: hidden;
+}
+details.info-collapse summary {
+  padding: 10px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-2);
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  user-select: none;
+}
+details.info-collapse summary::-webkit-details-marker { display: none; }
+details.info-collapse[open] summary { border-bottom: 1px solid var(--border); color: var(--text); }
+details.info-collapse .collapse-body { padding: 4px 14px; }
+
+.center { text-align: center; }
+.hint { font-size: 12px; color: var(--muted); }
+@media (max-width: 520px) {
+  .search-row { flex-direction: column; }
+}
 </style>
 </head>
 <body>
+<header class="top-header">
+  <a href="/" class="brand">
+    <span class="brand-icon"><i class="fa-solid fa-bolt-lightning"></i></span>
+    <span>Traffic Control</span>
+  </a>
+  <nav class="nav-row" aria-label="Điều hướng">
+    <a class="nav-link" href="/"><i class="fa-solid fa-gauge-high"></i> Dashboard</a>
+    <a class="nav-link boost-link" href="/boost"><i class="fa-solid fa-rocket"></i> Boost</a>
+    <a class="nav-link" href="/order.html"><i class="fa-solid fa-cart-plus"></i> Đặt đơn</a>
+    <a class="nav-link active" href="/track.html"><i class="fa-solid fa-magnifying-glass"></i> Tra cứu</a>
+  </nav>
+</header>
+
 <div class="wrap">
-  <div class="nav-top"><a class="nav-link" href="/boost">Web Demo /boost</a> <a class="nav-link" href="/order.html">+ Đặt đơn mới</a></div>
-  <h1>Theo dõi tiến độ đơn</h1>
-  <p class="sub">Cập nhật trực tiếp theo thời gian thực qua Socket.IO</p>
+  <div class="hero-head">
+    <h1>Theo dõi tiến độ đơn</h1>
+    <p class="sub">Cập nhật trực tiếp theo thời gian thực qua Socket.IO</p>
+  </div>
 
   <div class="card">
     <form class="search-row" id="lookupForm">
       <input id="inputId" type="text" placeholder="Nhập mã đơn (ORD-...)" autocomplete="off">
-      <button type="submit">Tra cứu</button>
+      <button type="submit" id="lookupBtn" class="btn-primary">
+        <span class="btn-spinner" aria-hidden="true"></span>
+        <i class="fa-solid fa-magnifying-glass btn-icon"></i>
+        <span class="btn-label">Tra cứu</span>
+      </button>
     </form>
     <div class="err hidden" id="errBox"></div>
   </div>
@@ -52,19 +271,33 @@ button.ghost{background:transparent;border:1px solid var(--border);width:100%;ma
   <div class="card hidden" id="detailCard">
     <div class="center">
       <span class="badge b-wait" id="statusBadge">--</span>
-      <h2 style="margin-top:14px;font-size:36px" id="pct">0%</h2>
+      <h2 style="margin-top:14px;font-size:38px;font-family:'JetBrains Mono',monospace;color:var(--emerald-bright)" id="pct">0%</h2>
     </div>
     <div class="bar"><i id="barFill"></i></div>
     <p class="center hint" id="progTxt" style="margin-bottom:14px">0 / 0 click</p>
 
+    <div class="track-share-box">
+      <div class="track-share-head"><i class="fa-solid fa-link"></i> Link theo dõi đơn hàng</div>
+      <div class="track-share-row">
+        <span id="shareTrackText" class="track-share-url"></span>
+        <button type="button" class="btn-copy-link" id="btnCopyShare"><i class="fa-regular fa-copy"></i> <span>Sao chép</span></button>
+      </div>
+    </div>
+
     <div class="kv"><span>Mã đơn</span><b id="dId"></b></div>
-    <div class="kv"><span>Mã chuyển khoản</span><b id="dCode"></b></div>
     <div class="kv"><span>Link đích</span><b id="dUrl"></b></div>
-    <div class="kv"><span>Proxy</span><b id="dProxy"></b></div>
-    <div class="kv"><span>Số tiền</span><b id="dTotal"></b></div>
-    <div class="kv"><span>Chế độ chạy</span><b>Request nhẹ</b></div>
+    <div class="kv"><span>Số tiền</span><b id="dTotal" class="emerald"></b></div>
     <div class="kv"><span>Thành công / Lỗi</span><b id="dCounts"></b></div>
-    <div class="kv"><span>Dự kiến kết thúc</span><b id="dEnd"></b></div>
+
+    <details class="info-collapse">
+      <summary><span><i class="fa-solid fa-circle-info"></i> Chi tiết chuyển khoản &amp; proxy</span><i class="fa-solid fa-chevron-down"></i></summary>
+      <div class="collapse-body">
+        <div class="kv"><span>Mã chuyển khoản</span><b id="dCode"></b></div>
+        <div class="kv"><span>Proxy</span><b id="dProxy"></b></div>
+        <div class="kv"><span>Chế độ chạy</span><b>Request nhẹ</b></div>
+        <div class="kv" style="border-bottom:0"><span>Dự kiến kết thúc</span><b id="dEnd"></b></div>
+      </div>
+    </details>
 
     <a id="payBtn" href="/order.html" class="hidden" style="display:block;text-align:center;margin-top:16px;padding:12px;border-radius:10px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;text-decoration:none;font-weight:700">Mở trang thanh toán VietQR</a>
   </div>
@@ -73,8 +306,18 @@ button.ghost{background:transparent;border:1px solid var(--border);width:100%;ma
 <script src="/socket.io/socket.io.js"></script>
 <script>
 const $ = id => document.getElementById(id);
-let currentOrderId = new URLSearchParams(location.search).get('order') || localStorage.getItem('trafficOrderId') || '';
+const urlParams = new URLSearchParams(location.search);
+let currentOrderId = urlParams.get('orderId') || urlParams.get('order') || localStorage.getItem('trafficOrderId') || '';
 let pollTimer = null, cachedOrder = null;
+
+function setLookupLoading(loading) {
+  const btn = $('lookupBtn');
+  if (!btn) return;
+  const lbl = btn.querySelector('.btn-label');
+  btn.disabled = Boolean(loading);
+  btn.classList.toggle('is-loading', Boolean(loading));
+  if (lbl) lbl.textContent = loading ? 'Đang tìm...' : 'Tra cứu';
+}
 
 const socket = typeof io === 'function' ? io() : null;
 if (socket) {
@@ -92,6 +335,9 @@ function renderOrder(o) {
   cachedOrder = o;
   $('detailCard').classList.remove('hidden');
   $('errBox').classList.add('hidden');
+  const shareUrl = location.origin + '/track.html?orderId=' + encodeURIComponent(o.orderId);
+  if ($('shareTrackText')) $('shareTrackText').textContent = shareUrl;
+
   const p = o.progress || { successVisits: o.successVisits || 0, failedVisits: o.failedVisits || 0, targetLimit: o.targetClicks, status: o.status };
   const target = p.targetLimit || o.targetClicks || 1;
   const success = p.successVisits || 0;
@@ -119,7 +365,7 @@ function renderOrder(o) {
     badge.textContent = 'Chờ thanh toán';
     payBtn.classList.remove('hidden');
     payBtn.style.display = 'block';
-    payBtn.href = '/order.html?order=' + encodeURIComponent(o.orderId);
+    payBtn.href = '/order.html?orderId=' + encodeURIComponent(o.orderId);
   } else {
     badge.className = 'badge b-ok';
     badge.textContent = 'Đã thanh toán · Đang chạy';
@@ -136,8 +382,9 @@ function renderOrder(o) {
   $('dEnd').textContent = p.endTime ? new Date(p.endTime).toLocaleString('vi-VN') : '—';
 }
 
-async function fetchOrder() {
+async function fetchOrder(showSpinner) {
   if (!currentOrderId) return;
+  if (showSpinner) setLookupLoading(true);
   try {
     const r = await fetch('/api/orders/' + encodeURIComponent(currentOrderId));
     const d = await r.json();
@@ -150,19 +397,35 @@ async function fetchOrder() {
     }
     renderOrder(d.order);
   } catch (e) {}
+  finally {
+    if (showSpinner) setLookupLoading(false);
+  }
 }
 
 function startTracking(id) {
   currentOrderId = id.trim();
   if (!currentOrderId) return;
   $('inputId').value = currentOrderId;
-  history.replaceState(null, '', '?order=' + encodeURIComponent(currentOrderId));
+  history.replaceState(null, '', '?orderId=' + encodeURIComponent(currentOrderId));
   if (socket) socket.emit('subscribe-order', currentOrderId);
   stopPolling();
-  fetchOrder();
-  pollTimer = setInterval(fetchOrder, 3000);
+  fetchOrder(true);
+  pollTimer = setInterval(() => fetchOrder(false), 3000);
 }
 function stopPolling() { if (pollTimer) clearInterval(pollTimer); pollTimer = null; }
+
+if ($('btnCopyShare')) {
+  $('btnCopyShare').addEventListener('click', () => {
+    const txt = $('shareTrackText') ? $('shareTrackText').textContent : '';
+    if (!txt) return;
+    navigator.clipboard.writeText(txt).then(() => {
+      const span = $('btnCopyShare').querySelector('span');
+      const orig = span ? span.textContent : 'Sao chép';
+      if (span) span.textContent = 'Đã chép!';
+      setTimeout(() => { if (span) span.textContent = orig; }, 1400);
+    });
+  });
+}
 
 $('lookupForm').onsubmit = e => {
   e.preventDefault();

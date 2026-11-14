@@ -3,7 +3,21 @@ const socket = io();
 
 // ─── App State ─────────────────────────────────────────────────────────────────
 let activeCampaignId = null;
+let authRequired = false;
 const campaignStates = new Map();  // id -> { status, config, stats, logs }
+
+function setBtnLoading(btn, isLoading, loadingLabel) {
+    if (!btn) return;
+    const span = btn.querySelector('span');
+    if (span && !btn.dataset.defaultLabel) {
+        btn.dataset.defaultLabel = span.textContent;
+    }
+    btn.disabled = Boolean(isLoading);
+    btn.classList.toggle('is-loading', Boolean(isLoading));
+    if (span) {
+        span.textContent = isLoading ? (loadingLabel || 'Đang xử lý...') : (btn.dataset.defaultLabel || span.textContent);
+    }
+}
 
 // ─── DOM refs ──────────────────────────────────────────────────────────────────
 const tabsArea          = document.getElementById('campaigns-tabs-area');
@@ -368,8 +382,7 @@ addCampaignForm.addEventListener('submit', async (e) => {
     if (!config.targetUrl) { showModalError('URL muc tieu khong duoc de trong.'); return; }
     if (!config.targetClicks || config.targetClicks < 1) { showModalError('So luot click phai >= 1.'); return; }
 
-    modalSubmitBtn.disabled = true;
-    modalSubmitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Dang tao...';
+    setBtnLoading(modalSubmitBtn, true, 'Đang tạo...');
 
     try {
         const res = await fetch('/api/campaigns', {
@@ -386,8 +399,7 @@ addCampaignForm.addEventListener('submit', async (e) => {
     } catch (err) {
         showModalError('Khong the ket noi may chu.');
     } finally {
-        modalSubmitBtn.disabled = false;
-        modalSubmitBtn.innerHTML = '<i class="fa-solid fa-rocket"></i> Tao chien dich';
+        setBtnLoading(modalSubmitBtn, false);
     }
 });
 
@@ -407,8 +419,7 @@ proxyConfigForm.addEventListener('submit', async (e) => {
     const cooldownSec = parseInt(document.getElementById('proxy-cooldown')?.value ?? '30', 10);
 
     const btn = document.getElementById('save-proxy-btn');
-    btn.disabled = true;
-    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Dang luu...';
+    setBtnLoading(btn, true, 'Đang lưu...');
 
     try {
         const res = await fetch('/api/proxy-config', {
@@ -427,8 +438,7 @@ proxyConfigForm.addEventListener('submit', async (e) => {
     } catch (err) {
         alert('Khong the ket noi may chu.');
     } finally {
-        btn.disabled = false;
-        btn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> Luu cau hinh Proxy';
+        setBtnLoading(btn, false);
     }
 });
 
@@ -470,8 +480,20 @@ function renderCampaignTabs(campaignList) {
 
 let currentUserRole = 'admin';
 
+function syncAuthHeaderVisibility() {
+    const logoutEl = document.getElementById('logout-btn');
+    const userBadge = document.getElementById('header-user-badge');
+    if (!authRequired) {
+        if (logoutEl) logoutEl.style.display = 'none';
+        if (userBadge) userBadge.style.display = 'none';
+    } else {
+        if (logoutEl) logoutEl.style.display = 'inline-flex';
+        if (userBadge) userBadge.style.display = 'inline-flex';
+    }
+}
+
 function applyRoleUI(role, username) {
-    currentUserRole = role === 'admin' ? 'admin' : 'admin';
+    currentUserRole = role === 'admin' ? 'admin' : 'guest';
 
     document.body.classList.remove('guest-mode');
 
@@ -486,37 +508,35 @@ function applyRoleUI(role, username) {
     }
 
     const poolHeader = document.getElementById('pool-status-header');
-    if (poolHeader) poolHeader.style.display = 'block';
+    if (poolHeader) poolHeader.style.display = 'inline-flex';
 
     if (stopBtn) stopBtn.style.display = 'inline-flex';
     const resetBtn = document.getElementById('reset-stats-btn');
     if (resetBtn) resetBtn.style.display = 'inline-flex';
 
     if (exportStatsBtn) {
-        exportStatsBtn.style.cssText = 'color: var(--primary); display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; background: transparent; border: none; cursor: pointer;';
-        exportStatsBtn.innerHTML = '<i class="fa-solid fa-file-arrow-down"></i> Tai Bao Cao';
+        exportStatsBtn.style.display = 'inline-flex';
     }
 
     document.querySelectorAll('.tab-delete').forEach(btn => {
         btn.style.display = 'inline-flex';
     });
 
+    const logoutEl = document.getElementById('logout-btn');
     let userBadge = document.getElementById('header-user-badge');
-    if (!userBadge) {
+    if (!userBadge && authRequired && logoutEl && logoutEl.parentNode) {
         userBadge = document.createElement('div');
         userBadge.id = 'header-user-badge';
-        userBadge.style.cssText = 'font-size: 12px; font-weight: 600; padding: 5px 14px; border-radius: 20px; display: flex; align-items: center; gap: 6px; font-family: "Outfit", sans-serif;';
-        const logoutBtn = document.getElementById('logout-btn');
-        if (logoutBtn && logoutBtn.parentNode) {
-            logoutBtn.parentNode.insertBefore(userBadge, logoutBtn);
-        }
+        userBadge.style.cssText = 'font-size: 12px; font-weight: 600; padding: 6px 12px; border-radius: 9px; display: inline-flex; align-items: center; gap: 6px;';
+        logoutEl.parentNode.insertBefore(userBadge, logoutEl);
     }
     if (userBadge) {
-        userBadge.style.background = 'rgba(99, 102, 241, 0.12)';
-        userBadge.style.border = '1px solid rgba(99, 102, 241, 0.3)';
-        userBadge.style.color = '#818cf8';
-        userBadge.innerHTML = `<i class="fa-solid fa-user-shield"></i> Quyen: <strong>ADMIN (${username || 'admin'})</strong>`;
+        userBadge.style.background = 'rgba(79, 70, 229, 0.14)';
+        userBadge.style.border = '1px solid rgba(99, 102, 241, 0.32)';
+        userBadge.style.color = '#c7d2fe';
+        userBadge.innerHTML = `<i class="fa-solid fa-user-shield"></i> <strong>${username || 'admin'}</strong>`;
     }
+    syncAuthHeaderVisibility();
 }
 
 function createTabButton(c) {
@@ -656,10 +676,13 @@ async function deleteCampaign(id, name) {
 stopBtn.addEventListener('click', async () => {
     if (!activeCampaignId) return;
     if (!confirm('Ban co chac chan muon dung chien dich nay?')) return;
+    setBtnLoading(stopBtn, true, 'Đang dừng...');
     try {
         await fetch(`/api/campaigns/${activeCampaignId}/stop`, { method: 'POST' });
     } catch (err) {
         socket.emit('stop-campaign', { campaignId: activeCampaignId });
+    } finally {
+        setBtnLoading(stopBtn, false);
     }
 });
 
@@ -667,10 +690,13 @@ stopBtn.addEventListener('click', async () => {
 resetStatsBtn.addEventListener('click', async () => {
     if (!activeCampaignId) return;
     if (!confirm(`Reset toan bo thong ke cua Chien dich ${activeCampaignId}?`)) return;
+    setBtnLoading(resetStatsBtn, true, 'Đang reset...');
     try {
         await fetch(`/api/campaigns/${activeCampaignId}/reset-stats`, { method: 'POST' });
     } catch (err) {
         socket.emit('reset-stats', { campaignId: activeCampaignId });
+    } finally {
+        setBtnLoading(resetStatsBtn, false);
     }
     resetStatsDisplay();
 });
@@ -852,6 +878,20 @@ socket.on('user-info', (data) => {
     }
 });
 
+fetch('/api/public-config', { cache: 'no-store' })
+    .then(r => (r.ok ? r.json() : null))
+    .then(cfg => {
+        if (cfg && typeof cfg.authRequired === 'boolean') {
+            authRequired = cfg.authRequired;
+            if (cfg.authenticated && cfg.role === 'admin') {
+                applyRoleUI(cfg.role, cfg.username);
+            } else {
+                syncAuthHeaderVisibility();
+            }
+        }
+    })
+    .catch(() => {});
+
 fetch('/api/me').then(r => r.json()).then(d => {
     if (d && d.success && d.role === 'admin') {
         applyRoleUI(d.role, d.username);
@@ -960,10 +1000,10 @@ socket.on('stats-update', (data) => {
 });
 
 socket.on('disconnect', async (reason) => {
-    if (reason === 'io server disconnect') {
+    if (reason === 'io server disconnect' && authRequired) {
         try {
             const res = await fetch('/api/auth-check');
-            if (!res.ok) window.location.href = '/login.html';
+            if (res.status === 401) window.location.href = '/login.html';
         } catch (e) {}
     }
 });
@@ -975,8 +1015,8 @@ if (logoutBtn) {
         if (confirm('Ban co chac chan muon dang xuat?')) {
             try {
                 await fetch('/api/logout', { method: 'POST' });
-                window.location.href = '/login.html';
-            } catch (err) { window.location.href = '/login.html'; }
+                window.location.href = authRequired ? '/login.html' : '/';
+            } catch (err) { window.location.href = authRequired ? '/login.html' : '/'; }
         }
     });
 }
@@ -990,8 +1030,7 @@ if (changePasswordForm) {
         const newUsername = document.getElementById('new-username').value.trim();
         const currentPassword = document.getElementById('current-password').value;
         const newPassword = document.getElementById('new-password').value;
-        changePassBtn.disabled = true;
-        changePassBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Dang cap nhat...';
+        setBtnLoading(changePassBtn, true, 'Đang cập nhật...');
         try {
             const res = await fetch('/api/change-password', {
                 method: 'POST',
@@ -1003,15 +1042,14 @@ if (changePasswordForm) {
             else alert('Loi: ' + (data.message || 'Khong the doi mat khau.'));
         } catch (err) { alert('Khong the ket noi may chu.'); }
         finally {
-            changePassBtn.disabled = false;
-            changePassBtn.innerHTML = '<i class="fa-solid fa-key"></i> Cap nhat thong tin';
+            setBtnLoading(changePassBtn, false);
         }
     });
 }
 
 // ─── Apply suggested cooldown helper ─────────────────────────────────────────
 window.applySuggestedCooldown = function(sec) {
-    const advDetails = document.querySelector('#modal details') || document.querySelector('details');
+    const advDetails = document.querySelector('#add-campaign-modal details') || document.querySelector('details');
     if (advDetails) advDetails.open = true;
     const cooldownInput = document.getElementById('new-cooldown');
     if (cooldownInput) {
@@ -1098,9 +1136,9 @@ window.applySuggestedCooldown = function(sec) {
                 <td style="padding: 10px 12px; text-align: right; font-family: monospace; font-weight: 700; color: #34d399;">${fmtVnd(o.totalAmount)}</td>
                 <td style="padding: 10px 12px;">${renderBadge(o)}</td>
                 <td style="padding: 10px 12px; text-align: right; white-space: nowrap;">
-                    ${unpaidActive ? `<button type="button" class="adm-confirm-ord" data-id="${esc(o.orderId)}" data-code="${esc(o.orderCode)}" style="padding: 4px 10px; font-size: 11px; font-weight: 700; border-radius: 6px; border: 0; background: #10b981; color: #fff; cursor: pointer; margin-right: 4px;">Duyet &amp; Chay</button>` : ''}
-                    <a href="/track.html?order=${encodeURIComponent(o.orderId)}" target="_blank" style="display:inline-block;padding: 4px 8px; font-size: 11px; border-radius: 6px; border: 1px solid rgba(99,102,241,0.35); color: #a5b4fc; text-decoration: none; margin-right: 4px;">Xem</a>
-                    ${canDelete ? `<button type="button" class="adm-del-ord" data-id="${esc(o.orderId)}" data-code="${esc(o.orderCode)}" style="padding: 4px 8px; font-size: 11px; border-radius: 6px; border: 1px solid rgba(239,68,68,0.3); background: rgba(239,68,68,0.1); color: #f87171; cursor: pointer;">Xoa</button>` : ''}
+                    ${unpaidActive ? `<button type="button" class="adm-confirm-ord has-spinner" data-id="${esc(o.orderId)}" data-code="${esc(o.orderCode)}" style="padding: 5px 10px; font-size: 11px; font-weight: 700; border-radius: 7px; border: 0; background: #10b981; color: #052e16; cursor: pointer; margin-right: 4px; display: inline-flex; align-items: center; gap: 5px;"><i class="fa-solid fa-check"></i> <span>Duyệt &amp; Chạy</span></button>` : ''}
+                    <a href="/track.html?orderId=${encodeURIComponent(o.orderId)}" target="_blank" style="display:inline-flex;align-items:center;padding: 5px 9px; font-size: 11px; font-weight: 600; border-radius: 7px; border: 1px solid rgba(148,163,184,0.18); background: #1e293b; color: #cbd5e1; text-decoration: none; margin-right: 4px;">Xem</a>
+                    ${canDelete ? `<button type="button" class="adm-del-ord has-spinner" data-id="${esc(o.orderId)}" data-code="${esc(o.orderCode)}" style="padding: 5px 9px; font-size: 11px; font-weight: 600; border-radius: 7px; border: 1px solid rgba(239,68,68,0.3); background: rgba(239,68,68,0.1); color: #fca5a5; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;"><i class="fa-solid fa-trash"></i> <span>Xóa</span></button>` : ''}
                 </td>
             </tr>`;
         }).join('');
@@ -1145,15 +1183,21 @@ window.applySuggestedCooldown = function(sec) {
             currentFilter = btn.dataset.filter;
             filterBtns.forEach(b => {
                 const active = b === btn;
-                b.style.background = active ? 'rgba(99,102,241,0.2)' : 'rgba(255,255,255,0.04)';
-                b.style.borderColor = active ? 'rgba(99,102,241,0.4)' : 'rgba(255,255,255,0.1)';
-                b.style.color = active ? '#a5b4fc' : '#94a3b8';
+                b.style.background = active ? 'rgba(79,70,229,0.22)' : '#1e293b';
+                b.style.borderColor = active ? 'rgba(99,102,241,0.45)' : 'rgba(148,163,184,0.14)';
+                b.style.color = active ? '#c7d2fe' : '#94a3b8';
             });
             renderOrdersTable();
         });
     });
 
-    if (refreshBtn) refreshBtn.addEventListener('click', loadAdminOrders);
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', async () => {
+            setBtnLoading(refreshBtn, true, 'Đang tải...');
+            try { await loadAdminOrders(); }
+            finally { setBtnLoading(refreshBtn, false); }
+        });
+    }
 
     tbody.addEventListener('click', async (e) => {
         const confirmBtn = e.target.closest('.adm-confirm-ord');
@@ -1161,13 +1205,17 @@ window.applySuggestedCooldown = function(sec) {
             const id = confirmBtn.dataset.id;
             const code = confirmBtn.dataset.code;
             if (!confirm(`Xac nhan da nhan thanh toan va kich hoat don ${code}?`)) return;
-            confirmBtn.disabled = true;
+            setBtnLoading(confirmBtn, true, 'Đang duyệt...');
             try {
                 const res = await fetch(`/api/orders/${encodeURIComponent(id)}/confirm`, { method: 'POST' });
                 const d = await res.json();
                 if (!res.ok || !d.success) alert(d.message || 'Loi xac nhan don.');
                 await loadAdminOrders();
-            } catch (err) { alert('Loi ket noi.'); }
+            } catch (err) {
+                alert('Loi ket noi.');
+            } finally {
+                setBtnLoading(confirmBtn, false);
+            }
             return;
         }
         const delBtn = e.target.closest('.adm-del-ord');
@@ -1175,12 +1223,17 @@ window.applySuggestedCooldown = function(sec) {
             const id = delBtn.dataset.id;
             const code = delBtn.dataset.code;
             if (!confirm(`Xoa don hang ${code}?`)) return;
+            setBtnLoading(delBtn, true, 'Đang xóa...');
             try {
                 const res = await fetch(`/api/admin/orders/${encodeURIComponent(id)}`, { method: 'DELETE' });
                 const d = await res.json();
                 if (!res.ok || !d.success) alert(d.message || 'Khong xoa duoc.');
                 await loadAdminOrders();
-            } catch (err) { alert('Loi ket noi.'); }
+            } catch (err) {
+                alert('Loi ket noi.');
+            } finally {
+                setBtnLoading(delBtn, false);
+            }
         }
     });
 
@@ -1189,7 +1242,7 @@ window.applySuggestedCooldown = function(sec) {
             e.preventDefault();
             const msg = document.getElementById('payment-save-msg');
             const btn = document.getElementById('save-payment-btn');
-            btn.disabled = true;
+            setBtnLoading(btn, true, 'Đang lưu...');
             try {
                 const res = await fetch('/api/admin/payment-config', {
                     method: 'POST',
@@ -1210,7 +1263,9 @@ window.applySuggestedCooldown = function(sec) {
                     alert(d.message || 'Loi luu cau hinh thanh toan.');
                 }
             } catch (err) { alert('Khong the ket noi may chu.'); }
-            btn.disabled = false;
+            finally {
+                setBtnLoading(btn, false);
+            }
         });
     }
 

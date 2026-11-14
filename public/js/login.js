@@ -9,7 +9,31 @@ document.addEventListener('DOMContentLoaded', () => {
     const loginIcon = document.getElementById('login-icon');
     const loginText = document.getElementById('login-text');
 
+    // Redirect cleanly to dashboard when auth is disabled by default
+    fetch('/api/public-config', { cache: 'no-store' })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((cfg) => {
+            if (cfg && cfg.authRequired === false) {
+                window.location.replace('/');
+            }
+        })
+        .catch(() => {});
+
     if (!loginForm) return;
+
+    function setLoading(isLoading) {
+        if (!loginBtn) return;
+        loginBtn.disabled = Boolean(isLoading);
+        loginBtn.classList.toggle('is-loading', Boolean(isLoading));
+        if (loginIcon) {
+            loginIcon.className = isLoading
+                ? 'fa-solid fa-spinner fa-spin'
+                : 'fa-solid fa-right-to-bracket';
+        }
+        if (loginText) {
+            loginText.textContent = isLoading ? 'Đang xác thực...' : 'Đăng nhập hệ thống';
+        }
+    }
 
     // Load saved credentials from localStorage if available
     try {
@@ -36,10 +60,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        // Set loading UI
-        if (loginBtn) loginBtn.disabled = true;
-        if (loginIcon) loginIcon.className = 'fa-solid fa-spinner fa-spin';
-        if (loginText) loginText.textContent = 'Đang xác thực...';
+        setLoading(true);
 
         try {
             const response = await fetch('/api/login', {
@@ -62,7 +83,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     showError('Chỉ hỗ trợ đăng nhập tài khoản Quản trị (Admin).');
                     return;
                 }
-                // Save or clear remember credentials
                 try {
                     if (rememberMe) {
                         localStorage.setItem('tcs_remember_user', username);
@@ -91,9 +111,6 @@ document.addEventListener('DOMContentLoaded', () => {
             void errorBox.offsetWidth;
             errorBox.classList.add('shake');
         }
-        if (loginBtn) loginBtn.disabled = false;
-        if (loginIcon) loginIcon.className = 'fa-solid fa-right-to-bracket';
-        if (loginText) loginText.textContent = 'Đăng nhập hệ thống';
+        setLoading(false);
     }
 });
-
